@@ -12,20 +12,15 @@ use crate::moq::proto::{
     MEDIA_TYPE_VIDEO,
     deserialize_cancel,
     deserialize_heartbeat,
-    deserialize_object,
     deserialize_request,
     deserialize_subscribe,
     deserialize_terminate,
     deserialize_unsubscribe,
     serialize_heartbeat,
-    serialize_object,
     serialize_request,
-    serialize_subscribe,
     serialize_terminate,
     serialize_unsubscribe,
     serialize_subscribe_ok,
-    REASON_ERROR,
-    REASON_NORMAL,
     TYPE_CANCEL,
     TYPE_HEARTBEAT,
     TYPE_OBJECT,
@@ -38,18 +33,16 @@ use crate::moq::proto::{
 use iroh::endpoint::{ Connecting, Connection, SendStream, RecvStream };
 use iroh::protocol::ProtocolHandler;
 use iroh::{ Endpoint, NodeId };
-use anyhow::{ Result, bail, anyhow };
+use anyhow::{ Result, bail };
 use iroh_gossip::net::{ Gossip, Event, GossipEvent };
-use tokio::sync::{ mpsc, broadcast, oneshot };
+use tokio::sync::{ mpsc, broadcast };
 use uuid::Uuid;
 use std::sync::Arc;
 use futures::{ future::BoxFuture, StreamExt };
 use blake3;
 use std::time::{ SystemTime, UNIX_EPOCH, Duration };
 use tracing::{ info, error, debug, warn, trace };
-use bytes::{ BytesMut, Buf, BufMut };
-use std::collections::HashMap;
-use std::io::ErrorKind;
+use bytes::{ BytesMut, Buf };
 use tokio::io::AsyncWriteExt;
 
 use super::MoqIrohClient;
@@ -58,7 +51,6 @@ use crate::moq::subscriber;
 // Protocol-specific constants
 const STREAM_TYPE_CONTROL: u8 = 0x01;
 const STREAM_TYPE_DATA: u8 = 0x02;
-const MIN_HEARTBEAT_SPACING: u64 = 1; // Minimum seconds between heartbeat responses
 
 /// Configuration for the MOQ-Iroh service
 #[derive(Clone, Debug)]
@@ -95,7 +87,6 @@ impl Builder {
     }
 
     pub async fn spawn(self, endpoint: Endpoint, gossip: Arc<Gossip>) -> Result<MoqIroh> {
-        let config = self.config.unwrap_or_default();
         let engine = MoqIrohEngine::new(endpoint, gossip).await?;
         // Apply config to engine if needed, or use it elsewhere
         Ok(MoqIroh::new(engine))
@@ -177,7 +168,7 @@ impl MoqIroh {
         priority: u8
     ) -> Result<mpsc::Receiver<MoqObject>> {
         // Create a channel for this subscription
-        let (tx, rx) = mpsc::channel(512);
+        let (_tx, rx) = mpsc::channel(512);
 
         // Register with engine (which no longer returns a channel)
         self.engine.subscribe_to_stream(
@@ -628,7 +619,7 @@ impl MoqIroh {
         buffer: &mut BytesMut,
         send: &mut SendStream,
         remote_id: NodeId,
-        conn: &Connection
+        _conn: &Connection
     ) -> Result<()> {
         let (stream_id, namespace, start_sequence, group_id, priority) =
             deserialize_subscribe(buffer)?;
@@ -828,8 +819,8 @@ impl MoqIroh {
     /// # Returns
     /// `Result<()>` if the stream was handled successfully.
     async fn handle_data_stream(
-        stream_id: Uuid,
-        namespace: String,
+        _stream_id: Uuid,
+        _namespace: String,
         mut recv: RecvStream,
         send: SendStream,
         engine: Arc<MoqIrohEngine>,
@@ -885,7 +876,7 @@ impl MoqIroh {
 
                 // Keep the connection open until the remote closes it to drain incoming data
                 info!("Keeping connection open for stream_id: {}", stream_id);
-                let mut buf = vec![0u8; 1024];
+                let buf = vec![0u8; 1024];
                 loop {
                     match recv.read_chunk(buf.len(), false).await {
                         Ok(Some(chunk)) => {

@@ -2,13 +2,9 @@ use anyhow::Result;
 use std::time::{ Duration, SystemTime, UNIX_EPOCH };
 use tokio::{ sync::mpsc, task::JoinHandle };
 use uuid::Uuid;
-use crate::moq::engine::ConnectionState;
 use crate::moq::proto::{ MediaInit, VideoChunk };
 use crate::moq::client::MoqIrohClient;
-use iroh::NodeId;
-use tracing::{ info, error, debug };
-use async_trait::async_trait;
-use anyhow::bail;
+use tracing::{ info, error };
 
 /// Trait for video sources that can provide frames
 #[async_trait::async_trait]

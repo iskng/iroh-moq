@@ -15,12 +15,10 @@ use iroh::endpoint::{ Connection, SendStream, RecvStream };
 use iroh::{ Endpoint, NodeId };
 use tokio::sync::mpsc;
 use std::sync::Arc;
-use tracing::{ info, error, debug, warn, trace };
+use tracing::{ info, error, debug, trace };
 use uuid::Uuid;
 use bytes::{ BytesMut, Buf };
 use tokio::io::AsyncWriteExt;
-use std::time::Duration;
-use byteorder::{ ReadBytesExt, LittleEndian };
 use std::io::Cursor;
 use std::io::Read;
 

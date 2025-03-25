@@ -1,15 +1,10 @@
-use std::time::SystemTime;
-
 use anyhow::{ bail, Result, anyhow };
 use blake3;
 use bytes::{ Buf, BufMut, BytesMut };
 use iroh::PublicKey;
-use iroh::endpoint::{ RecvStream, SendStream };
 use serde::{ Deserialize, Serialize };
 use uuid::Uuid;
-use futures::StreamExt;
-use futures::Stream;
-use tracing::{ info, error };
+use tracing::info;
 
 // Protocol Constants
 pub const ALPN: &[u8] = b"iroh-moq/v1";
@@ -93,7 +88,12 @@ pub struct VideoChunk {
 
 impl MoqObject {
     /// Create a new video object from a video chunk
-    pub fn from_video_chunk(name: String, sequence: u64, chunk: VideoChunk, group_id: u32) -> Self {
+    pub fn from_video_chunk(
+        name: String,
+        sequence: u64,
+        chunk: VideoChunk,
+        _group_id: u32
+    ) -> Self {
         // Create a buffer to serialize the video chunk
         let mut buffer = BytesMut::new();
 
@@ -316,7 +316,6 @@ pub fn deserialize_heartbeat(buffer: &mut BytesMut) -> Result<u64> {
 }
 
 pub fn serialize_object(object: &MoqObject) -> BytesMut {
-    let start_time = SystemTime::now();
     let mut inner_buffer = BytesMut::new();
 
     // Add TYPE_OBJECT marker first

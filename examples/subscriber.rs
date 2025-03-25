@@ -1,9 +1,8 @@
 use anyhow::{ Result, bail, anyhow };
 use iroh::{ Endpoint, SecretKey, NodeId };
 use iroh::protocol::Router;
-use iroh_moq::moq::client::MoqIrohClient;
 use iroh_moq::moq::protocol::MoqIroh;
-use iroh_moq::moq::proto::{ StreamAnnouncement, MediaInit, VideoChunk };
+use iroh_moq::moq::proto::{ MediaInit, VideoChunk };
 use rand::rngs::OsRng;
 use std::env;
 use std::str::FromStr;
@@ -15,12 +14,9 @@ use tracing::{ info, error, debug, warn };
 use tracing_subscriber;
 use ffmpeg_next as ffmpeg;
 use std::io::{ BufWriter, Write };
-use std::path::Path;
 use std::fs::File;
 use chrono::Local;
 use std::process::{ Command, Stdio };
-use tokio::sync::mpsc;
-use tokio::io::AsyncWriteExt;
 use std::time::{ SystemTime, UNIX_EPOCH };
 use clap::{ Parser, ArgAction };
 
@@ -34,9 +30,9 @@ fn init_ffmpeg() -> Result<()> {
 struct VideoSaver {
     output_path: String,
     init_segment: Vec<u8>,
-    width: u32,
-    height: u32,
-    codec: String,
+    _width: u32,
+    _height: u32,
+    _codec: String,
     file: Option<BufWriter<File>>,
     ffplay_command: Option<String>,
     chunk_count: usize,
@@ -49,9 +45,9 @@ impl VideoSaver {
         Self {
             output_path: output_path.to_string(),
             init_segment: init.init_segment.clone(),
-            width: init.width,
-            height: init.height,
-            codec: init.codec.clone(),
+            _width: init.width,
+            _height: init.height,
+            _codec: init.codec.clone(),
             file: None,
             ffplay_command: None,
             chunk_count: 0,
@@ -232,12 +228,15 @@ impl VideoSaver {
     }
 
     // Old method to add a chunk to memory (keeping for compatibility)
+    #[allow(dead_code)]
     fn add_chunk(&mut self, chunk: VideoChunk) {
         // Now just a proxy to the streaming version to avoid storing chunks in memory
         let _ = self.add_chunk_streaming(&chunk);
     }
 
     // Write chunks directly to a file as HEVC
+
+    #[allow(dead_code)]
     fn save_raw(&self) -> Result<()> {
         // If we're already streaming, no need to do anything
         if self.file.is_some() {
@@ -258,6 +257,8 @@ impl VideoSaver {
     }
 
     // Write chunks to an MP4 file using FFmpeg
+
+    #[allow(dead_code)]
     fn save_mp4(&self) -> Result<()> {
         // If streaming, just close the file (flush happens automatically when dropped)
         if self.file.is_some() {
@@ -362,7 +363,6 @@ impl VideoSaver {
                     // Try force kill as a last resort
                     #[cfg(unix)]
                     {
-                        use std::os::unix::process::CommandExt;
                         let pid = process.id();
                         let _ = std::process::Command
                             ::new("kill")
@@ -391,15 +391,13 @@ impl Drop for VideoSaver {
         }
     }
 }
-
-// Define TimingInfo struct for enhanced latency tracking
 #[derive(Clone, Debug)]
 struct TimingInfo {
-    frame_timestamp: u64,
-    received_time: SystemTime,
-    displayed_time: Option<SystemTime>,
-    is_keyframe: bool,
-    sequence: u64,
+    _frame_timestamp: u64,
+    _received_time: SystemTime,
+    _displayed_time: Option<SystemTime>,
+    _is_keyframe: bool,
+    _sequence: u64,
 }
 
 #[derive(Parser, Debug)]
@@ -495,11 +493,11 @@ async fn main() -> Result<()> {
     let client = moq.client();
 
     // Set up router
-    let router = Router::builder(endpoint.clone())
+    let _router = Router::builder(endpoint.clone())
         .accept(iroh_moq::moq::proto::ALPN, moq.clone())
         .accept(iroh_gossip::ALPN, gossip.clone())
         .spawn().await?;
-    let router = Arc::new(router);
+    let _router = Arc::new(_router);
 
     // Set up a channel for graceful shutdown
     let (shutdown_tx, mut shutdown_rx) = tokio::sync::mpsc::channel::<()>(1);
@@ -774,11 +772,11 @@ async fn main() -> Result<()> {
 
                                             // Record detailed timing info
                                             timing_info.push(TimingInfo {
-                                                frame_timestamp: chunk.timestamp,
-                                                received_time: now,
-                                                displayed_time: None,
-                                                is_keyframe: chunk.is_keyframe,
-                                                sequence: chunk_count as u64,
+                                                _frame_timestamp: chunk.timestamp,
+                                                _received_time: now,
+                                                _displayed_time: None,
+                                                _is_keyframe: chunk.is_keyframe,
+                                                _sequence: chunk_count as u64,
                                             });
 
                                         

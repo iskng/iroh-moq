@@ -18,19 +18,17 @@ use ffmpeg::format::Pixel as FFmpegPixel;
 use ffmpeg::util::frame::video::Video as FfmpegFrame;
 use tracing::{ info, error };
 use tracing_subscriber;
-use std::time::{ SystemTime, UNIX_EPOCH, Duration };
-use anyhow::{ Result, bail, anyhow };
+use std::time::{ SystemTime, UNIX_EPOCH };
+use anyhow::{ Result, bail };
 use tokio::sync::mpsc;
 use std::sync::{ Arc, Mutex };
 use async_trait::async_trait;
-use iroh_moq::moq::{ client::MoqIrohClient, proto::MediaInit, VideoStreaming };
+use iroh_moq::moq::VideoStreaming;
 use iroh_moq::moq::protocol::MoqIroh;
 use iroh_moq::moq::video::{ VideoSource, VideoFrame, VideoConfig };
 use iroh::{ Endpoint, SecretKey, NodeId };
 use iroh::protocol::Router;
 use rand::rngs::OsRng;
-use std::env;
-use std::str::FromStr;
 
 struct FrameHandler {
     sender: mpsc::Sender<CMSampleBuffer>,

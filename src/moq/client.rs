@@ -1,11 +1,9 @@
 use super::proto::{
     StreamAnnouncement,
-    MoqObject,
     MediaInit,
     VideoChunk,
     deserialize_announce,
     ANNOUNCE_TOPIC,
-    ALPN,
 };
 use super::protocol::MoqIroh;
 use crate::moq::engine::ConnectionState;
@@ -18,7 +16,6 @@ use tokio::sync::{ mpsc, broadcast };
 use std::sync::Arc;
 use tracing::{ info, debug, error };
 use uuid::Uuid;
-use async_stream::stream;
 use blake3;
 use tokio_stream::wrappers::ReceiverStream;
 use std::time::Duration;

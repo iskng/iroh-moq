@@ -1,62 +1,19 @@
-use crate::moq::proto::{
-    deserialize_cancel,
-    deserialize_heartbeat,
-    deserialize_object,
-    deserialize_request,
-    deserialize_subscribe,
-    deserialize_terminate,
-    deserialize_unsubscribe,
-    serialize_announce,
-    serialize_heartbeat,
-    serialize_object,
-    serialize_request,
-    serialize_subscribe,
-    serialize_terminate,
-    serialize_unsubscribe,
-    serialize_subscribe_ok,
-    MoqObject,
-    StreamAnnouncement,
-    ALPN,
-    ANNOUNCE_TOPIC,
-    REASON_ERROR,
-    REASON_NORMAL,
-    TYPE_CANCEL,
-    TYPE_HEARTBEAT,
-    TYPE_OBJECT,
-    TYPE_REQUEST,
-    TYPE_SUBSCRIBE,
-    TYPE_TERMINATE,
-    TYPE_UNSUBSCRIBE,
-    TYPE_SUBSCRIBE_OK,
-    MEDIA_TYPE_INIT,
-    MEDIA_TYPE_VIDEO,
-    MediaInit,
-    VideoChunk,
-};
+use crate::moq::proto::{ MoqObject, MEDIA_TYPE_INIT };
 use iroh::Endpoint;
-use iroh::endpoint::{ Connection, SendStream, RecvStream, Connecting };
+use iroh::endpoint::SendStream;
 use iroh::NodeId;
 use iroh_gossip::net::Gossip;
 use anyhow::{ Result, bail };
 use tokio::sync::{ mpsc, Mutex, broadcast };
 use std::sync::Arc;
 use tracing::{ info, error, debug, warn, trace };
-use bytes::{ BytesMut, Buf, BufMut };
 use std::collections::{ HashMap, VecDeque };
 use dashmap::DashMap;
 use uuid::Uuid;
-use std::time::{ Duration, SystemTime, UNIX_EPOCH };
-use std::sync::atomic::{ AtomicU64, Ordering };
 use tokio::io::AsyncWriteExt;
 
 // Constants
-const HEARTBEAT_INTERVAL: u64 = 5; // Seconds between heartbeats
-const HEARTBEAT_TIMEOUT: u64 = 15; // Seconds before timeout
 const SLIDING_WINDOW_SIZE: usize = 100; // Max objects in retransmission buffer
-const MIN_HEARTBEAT_SPACING: u64 = 1; // Minimum seconds between heartbeat responses
-const STREAM_TYPE_CONTROL: u8 = 0x01;
-const STREAM_TYPE_DATA: u8 = 0x02;
-const TYPE_READY: u8 = 0x07; // New message type for stream readiness
 
 // Connection state for the MOQ-Iroh protocol
 #[derive(Debug, Clone, PartialEq)]
@@ -108,7 +65,7 @@ pub struct MoqIrohEngine {
     stream_actors: Arc<DashMap<(Uuid, String), mpsc::Sender<StreamCommand>>>,
     connection_state: Arc<Mutex<ConnectionState>>,
     state_tx: Arc<broadcast::Sender<ConnectionState>>,
-    last_heartbeat: Arc<Mutex<HashMap<NodeId, u64>>>, // Track last heartbeat timestamp per node
+    _last_heartbeat: Arc<Mutex<HashMap<NodeId, u64>>>, // Track last heartbeat timestamp per node
     data_stream_ready_tx: Arc<
         tokio::sync::RwLock<HashMap<NodeId, tokio::sync::oneshot::Sender<()>>>
     >,
@@ -125,7 +82,7 @@ impl MoqIrohEngine {
             stream_actors: Arc::new(DashMap::new()),
             connection_state: Arc::new(Mutex::new(ConnectionState::WaitingForPeer)),
             state_tx: Arc::new(state_tx),
-            last_heartbeat: Arc::new(Mutex::new(HashMap::new())),
+            _last_heartbeat: Arc::new(Mutex::new(HashMap::new())),
             data_stream_ready_tx: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
         })
     }
@@ -237,9 +194,9 @@ impl MoqIrohEngine {
         publisher_id: NodeId,
         stream_id: Uuid,
         namespace: String,
-        start_sequence: u64,
+        _start_sequence: u64,
         group_id: u32,
-        priority: u8
+        _priority: u8
     ) -> Result<()> {
         let namespace = Self::normalize_namespace(&namespace);
         info!(
@@ -260,10 +217,12 @@ impl MoqIrohEngine {
         if let Some(tx) = self.stream_actors.get(&stream_key) {
             debug!("Found existing stream actor for key: {:?}", stream_key);
             // Send subscribe command to actor
-            tx.send(StreamCommand::Subscribe {
-                node_id: publisher_id,
-                group_id,
-            }).await.map_err(|e| anyhow::anyhow!("Failed to send subscribe command: {}", e));
+            let _ = tx
+                .send(StreamCommand::Subscribe {
+                    node_id: publisher_id,
+                    group_id,
+                }).await
+                .map_err(|e| anyhow::anyhow!("Failed to send subscribe command: {}", e));
         } else {
             debug!("Stream actor not found for key: {:?}", stream_key);
             // Create new stream actor for remote stream
@@ -274,7 +233,7 @@ impl MoqIrohEngine {
             self.stream_actors.insert(stream_key, cmd_tx.clone());
 
             // Send subscribe command to actor
-            cmd_tx
+            let _result = cmd_tx
                 .send(StreamCommand::Subscribe {
                     node_id: publisher_id,
                     group_id,
@@ -320,7 +279,6 @@ impl MoqIrohEngine {
                 }).await
             {
                 error!("Failed to send set data stream command: {}", e);
-                return bail!("Stream actor channel closed");
             }
         } else {
             error!(
@@ -329,7 +287,6 @@ impl MoqIrohEngine {
                 normalized_ns,
                 namespace
             );
-            return bail!("Stream not found");
         }
 
         Ok(())
@@ -361,11 +318,9 @@ impl MoqIrohEngine {
                 }).await
             {
                 error!("Failed to send retransmission request: {}", e);
-                return bail!("Stream actor channel closed");
             }
         } else {
             error!("Stream not found: {}/{}", stream_id, normalized_ns);
-            return bail!("Stream not found");
         }
 
         Ok(())
@@ -447,7 +402,6 @@ impl MoqIrohEngine {
         if let Some(cmd_tx) = self.stream_actors.get(&(stream_id, normalized_ns.clone())) {
             if let Err(e) = cmd_tx.send(StreamCommand::Unsubscribe(node_id)).await {
                 error!("Failed to send unsubscribe command: {}", e);
-                return bail!("Stream actor channel closed");
             }
         } else {
             // No-op if stream doesn't exist

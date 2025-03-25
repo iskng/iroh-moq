@@ -258,7 +258,7 @@ enum Role {
 // Setup function for MoQ peers
 async fn setup_peer(
     role: Role,
-    connect_to: Option<NodeId>
+    _connect_to: Option<NodeId>
 ) -> Result<(MoqIrohClient, NodeId, Endpoint, Arc<Router>)> {
     info!("Setting up {:?} peer...", role);
     let mut rng = OsRng;
@@ -340,7 +340,7 @@ async fn _test_screen_capture_hevc_moq_impl() -> Result<()> {
         None
     ).await?;
     info!("Setting up Slave peer...");
-    let (receiver_client, receiver_id, _slave_endpoint, _slave_router) = setup_peer(
+    let (receiver_client, _receiver_id, _slave_endpoint, _slave_router) = setup_peer(
         Role::Slave,
         Some(sender_id)
     ).await?;
@@ -372,7 +372,7 @@ async fn _test_screen_capture_hevc_moq_impl() -> Result<()> {
         init_segment: vec![0; 32], // Placeholder; ideally SPS/PPS here
     };
     // Start streaming video
-    let stream = tokio::spawn(async move {
+    let _stream = tokio::spawn(async move {
         let _stream_handle = sender_client.stream_video(
             "/live/hevc_test".to_string(),
             capturer,
