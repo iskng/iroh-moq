@@ -1,0 +1,46 @@
+[package]
+name = "iroh-moq"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+quic-rpc = "0.18" # For QUIC-based RPC communication
+iroh = "0.32" # Core Iroh library for Endpoint and NodeId
+iroh-gossip = { version = "0.32", features = [
+  "rpc",
+] } # Gossip protocol for signaling
+serde = { version = "1", features = ["derive"] } # Serialization for messages
+serde_json = "1" # JSON serialization for gossip messages
+bytes = "1" # Efficient byte handling for QUIC messages
+tokio = { version = "1", features = [
+  "full",
+  "io-util",
+] } # Async runtime and utilities
+tokio-util = { version = "0.7" } # Tokio stream utilities
+tokio-stream = "0.1" # Stream utilities for Tokio
+futures = "0.3" # Async streams and futures
+futures-lite = "2.3.0" # Lightweight futures for streams
+anyhow = "1.0.79" # Error handling
+tracing = "0.1.40" # Logging and debugging
+tracing-subscriber = "0.3.18" # Subscriber for tracing
+uuid = { version = "1.10", features = ["v4", "serde"] } # UUID for stream IDs
+blake3 = "1.5.5" # Hashing for gossip topics
+async-stream = "0.3" # For creating async streams
+quinn = "0.11.6"
+async-trait = "0.1"
+rgb = "0.8"      # For color space conversion
+ffmpeg-next = "7.1.0"
+screencapturekit = "0.3.5"
+dashmap = "6.1.0"
+byteorder = "1.5.0"
+thiserror = "2.0.11"
+chrono = "0.4"   # For formatting timestamps
+clap = { version = "4.5.31", features = ["derive"] }
+
+[features]
+default = []
+relay = []   # Optional relay support feature
+
+[dev-dependencies]
+tokio = { version = "1", features = ["test-util"] } # For testing async code
+rand = "0.8" # For random number generation in tests

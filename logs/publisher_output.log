@@ -1,0 +1,564 @@
+warning: unused imports: `ALPN` and `MoqObject`
+ --> src/moq/client.rs:3:5
+  |
+3 |     MoqObject,
+  |     ^^^^^^^^^
+...
+8 |     ALPN,
+  |     ^^^^
+  |
+  = note: `#[warn(unused_imports)]` on by default
+
+warning: unused import: `async_stream::stream`
+  --> src/moq/client.rs:21:5
+   |
+21 | use async_stream::stream;
+   |     ^^^^^^^^^^^^^^^^^^^^
+
+warning: unused imports: `ALPN`, `ANNOUNCE_TOPIC`, `MEDIA_TYPE_VIDEO`, `MediaInit`, `REASON_ERROR`, `REASON_NORMAL`, `StreamAnnouncement`, `TYPE_CANCEL`, `TYPE_HEARTBEAT`, `TYPE_OBJECT`, `TYPE_REQUEST`, `TYPE_SUBSCRIBE_OK`, `TYPE_SUBSCRIBE`, `TYPE_TERMINATE`, `TYPE_UNSUBSCRIBE`, `VideoChunk`, `deserialize_cancel`, `deserialize_heartbeat`, `deserialize_object`, `deserialize_request`, `deserialize_subscribe`, `deserialize_terminate`, `deserialize_unsubscribe`, `serialize_announce`, `serialize_heartbeat`, `serialize_object`, `serialize_request`, `serialize_subscribe_ok`, `serialize_subscribe`, `serialize_terminate`, and `serialize_unsubscribe`
+  --> src/moq/engine.rs:2:5
+   |
+2  |     deserialize_cancel,
+   |     ^^^^^^^^^^^^^^^^^^
+3  |     deserialize_heartbeat,
+   |     ^^^^^^^^^^^^^^^^^^^^^
+4  |     deserialize_object,
+   |     ^^^^^^^^^^^^^^^^^^
+5  |     deserialize_request,
+   |     ^^^^^^^^^^^^^^^^^^^
+6  |     deserialize_subscribe,
+   |     ^^^^^^^^^^^^^^^^^^^^^
+7  |     deserialize_terminate,
+   |     ^^^^^^^^^^^^^^^^^^^^^
+8  |     deserialize_unsubscribe,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^
+9  |     serialize_announce,
+   |     ^^^^^^^^^^^^^^^^^^
+10 |     serialize_heartbeat,
+   |     ^^^^^^^^^^^^^^^^^^^
+11 |     serialize_object,
+   |     ^^^^^^^^^^^^^^^^
+12 |     serialize_request,
+   |     ^^^^^^^^^^^^^^^^^
+13 |     serialize_subscribe,
+   |     ^^^^^^^^^^^^^^^^^^^
+14 |     serialize_terminate,
+   |     ^^^^^^^^^^^^^^^^^^^
+15 |     serialize_unsubscribe,
+   |     ^^^^^^^^^^^^^^^^^^^^^
+16 |     serialize_subscribe_ok,
+   |     ^^^^^^^^^^^^^^^^^^^^^^
+17 |     MoqObject,
+18 |     StreamAnnouncement,
+   |     ^^^^^^^^^^^^^^^^^^
+19 |     ALPN,
+   |     ^^^^
+20 |     ANNOUNCE_TOPIC,
+   |     ^^^^^^^^^^^^^^
+21 |     REASON_ERROR,
+   |     ^^^^^^^^^^^^
+22 |     REASON_NORMAL,
+   |     ^^^^^^^^^^^^^
+23 |     TYPE_CANCEL,
+   |     ^^^^^^^^^^^
+24 |     TYPE_HEARTBEAT,
+   |     ^^^^^^^^^^^^^^
+25 |     TYPE_OBJECT,
+   |     ^^^^^^^^^^^
+26 |     TYPE_REQUEST,
+   |     ^^^^^^^^^^^^
+27 |     TYPE_SUBSCRIBE,
+   |     ^^^^^^^^^^^^^^
+28 |     TYPE_TERMINATE,
+   |     ^^^^^^^^^^^^^^
+29 |     TYPE_UNSUBSCRIBE,
+   |     ^^^^^^^^^^^^^^^^
+30 |     TYPE_SUBSCRIBE_OK,
+   |     ^^^^^^^^^^^^^^^^^
+31 |     MEDIA_TYPE_INIT,
+32 |     MEDIA_TYPE_VIDEO,
+   |     ^^^^^^^^^^^^^^^^
+33 |     MediaInit,
+   |     ^^^^^^^^^
+34 |     VideoChunk,
+   |     ^^^^^^^^^^
+
+warning: unused imports: `Connecting`, `Connection`, and `RecvStream`
+  --> src/moq/engine.rs:37:23
+   |
+37 | use iroh::endpoint::{ Connection, SendStream, RecvStream, Connecting };
+   |                       ^^^^^^^^^^              ^^^^^^^^^^  ^^^^^^^^^^
+
+warning: unused imports: `BufMut`, `Buf`, and `BytesMut`
+  --> src/moq/engine.rs:44:14
+   |
+44 | use bytes::{ BytesMut, Buf, BufMut };
+   |              ^^^^^^^^  ^^^  ^^^^^^
+
+warning: unused imports: `Duration`, `SystemTime`, and `UNIX_EPOCH`
+  --> src/moq/engine.rs:48:18
+   |
+48 | use std::time::{ Duration, SystemTime, UNIX_EPOCH };
+   |                  ^^^^^^^^  ^^^^^^^^^^  ^^^^^^^^^^
+
+warning: unused imports: `AtomicU64` and `Ordering`
+  --> src/moq/engine.rs:49:26
+   |
+49 | use std::sync::atomic::{ AtomicU64, Ordering };
+   |                          ^^^^^^^^^  ^^^^^^^^
+
+warning: unused imports: `RecvStream` and `SendStream`
+ --> src/moq/proto.rs:7:23
+  |
+7 | use iroh::endpoint::{ RecvStream, SendStream };
+  |                       ^^^^^^^^^^  ^^^^^^^^^^
+
+warning: unused import: `futures::StreamExt`
+  --> src/moq/proto.rs:10:5
+   |
+10 | use futures::StreamExt;
+   |     ^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `futures::Stream`
+  --> src/moq/proto.rs:11:5
+   |
+11 | use futures::Stream;
+   |     ^^^^^^^^^^^^^^^
+
+warning: unused import: `error`
+  --> src/moq/proto.rs:12:22
+   |
+12 | use tracing::{ info, error };
+   |                      ^^^^^
+
+warning: unused imports: `REASON_ERROR`, `REASON_NORMAL`, `deserialize_object`, `serialize_object`, and `serialize_subscribe`
+  --> src/moq/protocol.rs:15:5
+   |
+15 |     deserialize_object,
+   |     ^^^^^^^^^^^^^^^^^^
+...
+21 |     serialize_object,
+   |     ^^^^^^^^^^^^^^^^
+22 |     serialize_request,
+23 |     serialize_subscribe,
+   |     ^^^^^^^^^^^^^^^^^^^
+...
+27 |     REASON_ERROR,
+   |     ^^^^^^^^^^^^
+28 |     REASON_NORMAL,
+   |     ^^^^^^^^^^^^^
+
+warning: unused import: `anyhow`
+  --> src/moq/protocol.rs:41:29
+   |
+41 | use anyhow::{ Result, bail, anyhow };
+   |                             ^^^^^^
+
+warning: unused import: `oneshot`
+  --> src/moq/protocol.rs:43:37
+   |
+43 | use tokio::sync::{ mpsc, broadcast, oneshot };
+   |                                     ^^^^^^^
+
+warning: unused import: `BufMut`
+  --> src/moq/protocol.rs:50:29
+   |
+50 | use bytes::{ BytesMut, Buf, BufMut };
+   |                             ^^^^^^
+
+warning: unused import: `std::collections::HashMap`
+  --> src/moq/protocol.rs:51:5
+   |
+51 | use std::collections::HashMap;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `std::io::ErrorKind`
+  --> src/moq/protocol.rs:52:5
+   |
+52 | use std::io::ErrorKind;
+   |     ^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::moq::engine::ConnectionState`
+ --> src/moq/video.rs:5:5
+  |
+5 | use crate::moq::engine::ConnectionState;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `iroh::NodeId`
+ --> src/moq/video.rs:8:5
+  |
+8 | use iroh::NodeId;
+  |     ^^^^^^^^^^^^
+
+warning: unused import: `debug`
+ --> src/moq/video.rs:9:29
+  |
+9 | use tracing::{ info, error, debug };
+  |                             ^^^^^
+
+warning: unused import: `async_trait::async_trait`
+  --> src/moq/video.rs:10:5
+   |
+10 | use async_trait::async_trait;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `anyhow::bail`
+  --> src/moq/video.rs:11:5
+   |
+11 | use anyhow::bail;
+   |     ^^^^^^^^^^^^
+
+warning: unused import: `warn`
+  --> src/moq/subscriber.rs:18:36
+   |
+18 | use tracing::{ info, error, debug, warn, trace };
+   |                                    ^^^^
+
+warning: unused import: `std::time::Duration`
+  --> src/moq/subscriber.rs:22:5
+   |
+22 | use std::time::Duration;
+   |     ^^^^^^^^^^^^^^^^^^^
+
+warning: unused imports: `LittleEndian` and `ReadBytesExt`
+  --> src/moq/subscriber.rs:23:18
+   |
+23 | use byteorder::{ ReadBytesExt, LittleEndian };
+   |                  ^^^^^^^^^^^^  ^^^^^^^^^^^^
+
+warning: unreachable expression
+   --> src/moq/engine.rs:450:17
+    |
+450 |                 return bail!("Stream actor channel closed");
+    |                 ^^^^^^^------------------------------------
+    |                 |      |
+    |                 |      any code following this expression is unreachable
+    |                 unreachable expression
+    |
+    = note: `#[warn(unreachable_code)]` on by default
+
+warning: unused variable: `start_sequence`
+   --> src/moq/engine.rs:240:9
+    |
+240 |         start_sequence: u64,
+    |         ^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_start_sequence`
+    |
+    = note: `#[warn(unused_variables)]` on by default
+
+warning: unused variable: `priority`
+   --> src/moq/engine.rs:242:9
+    |
+242 |         priority: u8
+    |         ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_priority`
+
+warning: unreachable expression
+   --> src/moq/engine.rs:323:17
+    |
+323 |                 return bail!("Stream actor channel closed");
+    |                 ^^^^^^^------------------------------------
+    |                 |      |
+    |                 |      any code following this expression is unreachable
+    |                 unreachable expression
+
+warning: unreachable expression
+   --> src/moq/engine.rs:332:13
+    |
+332 |             return bail!("Stream not found");
+    |             ^^^^^^^-------------------------
+    |             |      |
+    |             |      any code following this expression is unreachable
+    |             unreachable expression
+
+warning: unreachable expression
+   --> src/moq/engine.rs:364:17
+    |
+364 |                 return bail!("Stream actor channel closed");
+    |                 ^^^^^^^------------------------------------
+    |                 |      |
+    |                 |      any code following this expression is unreachable
+    |                 unreachable expression
+
+warning: unreachable expression
+   --> src/moq/engine.rs:368:13
+    |
+368 |             return bail!("Stream not found");
+    |             ^^^^^^^-------------------------
+    |             |      |
+    |             |      any code following this expression is unreachable
+    |             unreachable expression
+
+warning: unused variable: `config`
+  --> src/moq/protocol.rs:98:13
+   |
+98 |         let config = self.config.unwrap_or_default();
+   |             ^^^^^^ help: if this is intentional, prefix it with an underscore: `_config`
+
+warning: unused variable: `tx`
+   --> src/moq/protocol.rs:180:14
+    |
+180 |         let (tx, rx) = mpsc::channel(512);
+    |              ^^ help: if this is intentional, prefix it with an underscore: `_tx`
+
+warning: unused variable: `conn`
+   --> src/moq/protocol.rs:631:9
+    |
+631 |         conn: &Connection
+    |         ^^^^ help: if this is intentional, prefix it with an underscore: `_conn`
+
+warning: unused variable: `stream_id`
+   --> src/moq/protocol.rs:831:9
+    |
+831 |         stream_id: Uuid,
+    |         ^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_stream_id`
+
+warning: unused variable: `namespace`
+   --> src/moq/protocol.rs:832:9
+    |
+832 |         namespace: String,
+    |         ^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_namespace`
+
+warning: variable does not need to be mutable
+   --> src/moq/protocol.rs:888:21
+    |
+888 |                 let mut buf = vec![0u8; 1024];
+    |                     ----^^^
+    |                     |
+    |                     help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` on by default
+
+warning: unused variable: `group_id`
+  --> src/moq/proto.rs:96:77
+   |
+96 |     pub fn from_video_chunk(name: String, sequence: u64, chunk: VideoChunk, group_id: u32) -> Self {
+   |                                                                             ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_group_id`
+
+warning: unused variable: `start_time`
+   --> src/moq/proto.rs:319:9
+    |
+319 |     let start_time = SystemTime::now();
+    |         ^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_start_time`
+
+warning: constant `HEARTBEAT_INTERVAL` is never used
+  --> src/moq/engine.rs:53:7
+   |
+53 | const HEARTBEAT_INTERVAL: u64 = 5; // Seconds between heartbeats
+   |       ^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` on by default
+
+warning: constant `HEARTBEAT_TIMEOUT` is never used
+  --> src/moq/engine.rs:54:7
+   |
+54 | const HEARTBEAT_TIMEOUT: u64 = 15; // Seconds before timeout
+   |       ^^^^^^^^^^^^^^^^^
+
+warning: constant `MIN_HEARTBEAT_SPACING` is never used
+  --> src/moq/engine.rs:56:7
+   |
+56 | const MIN_HEARTBEAT_SPACING: u64 = 1; // Minimum seconds between heartbeat responses
+   |       ^^^^^^^^^^^^^^^^^^^^^
+
+warning: constant `STREAM_TYPE_CONTROL` is never used
+  --> src/moq/engine.rs:57:7
+   |
+57 | const STREAM_TYPE_CONTROL: u8 = 0x01;
+   |       ^^^^^^^^^^^^^^^^^^^
+
+warning: constant `STREAM_TYPE_DATA` is never used
+  --> src/moq/engine.rs:58:7
+   |
+58 | const STREAM_TYPE_DATA: u8 = 0x02;
+   |       ^^^^^^^^^^^^^^^^
+
+warning: constant `TYPE_READY` is never used
+  --> src/moq/engine.rs:59:7
+   |
+59 | const TYPE_READY: u8 = 0x07; // New message type for stream readiness
+   |       ^^^^^^^^^^
+
+warning: field `last_heartbeat` is never read
+   --> src/moq/engine.rs:111:5
+    |
+105 | pub struct MoqIrohEngine {
+    |            ------------- field in this struct
+...
+111 |     last_heartbeat: Arc<Mutex<HashMap<NodeId, u64>>>, // Track last heartbeat timestamp per node
+    |     ^^^^^^^^^^^^^^
+    |
+    = note: `MoqIrohEngine` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: constant `MIN_HEARTBEAT_SPACING` is never used
+  --> src/moq/protocol.rs:61:7
+   |
+61 | const MIN_HEARTBEAT_SPACING: u64 = 1; // Minimum seconds between heartbeat responses
+   |       ^^^^^^^^^^^^^^^^^^^^^
+
+warning: variant `Error` is never constructed
+  --> src/moq/subscriber.rs:45:5
+   |
+33 | enum SubscriberState {
+   |      --------------- variant in this enum
+...
+45 |     Error(String),
+   |     ^^^^^
+   |
+   = note: `SubscriberState` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: unused `Result` that must be used
+   --> src/moq/engine.rs:263:13
+    |
+263 | /             tx.send(StreamCommand::Subscribe {
+264 | |                 node_id: publisher_id,
+265 | |                 group_id,
+266 | |             }).await.map_err(|e| anyhow::anyhow!("Failed to send subscribe command: {}", e));
+    | |____________________________________________________________________________________________^
+    |
+    = note: this `Result` may be an `Err` variant, which should be handled
+    = note: `#[warn(unused_must_use)]` on by default
+help: use `let _ = ...` to ignore the resulting value
+    |
+263 |             let _ = tx.send(StreamCommand::Subscribe {
+    |             +++++++
+
+warning: unused `Result` that must be used
+   --> src/moq/engine.rs:277:13
+    |
+277 | /             cmd_tx
+278 | |                 .send(StreamCommand::Subscribe {
+279 | |                     node_id: publisher_id,
+280 | |                     group_id,
+281 | |                 }).await
+282 | |                 .map_err(|e| anyhow::anyhow!("Failed to send subscribe command: {}", e));
+    | |________________________________________________________________________________________^
+    |
+    = note: this `Result` may be an `Err` variant, which should be handled
+help: use `let _ = ...` to ignore the resulting value
+    |
+277 |             let _ = cmd_tx
+    |             +++++++
+
+warning: `iroh-moq` (lib) generated 51 warnings (run `cargo fix --lib -p iroh-moq` to apply 26 suggestions)
+warning: unused import: `Duration`
+  --> examples/publisher.rs:21:42
+   |
+21 | use std::time::{ SystemTime, UNIX_EPOCH, Duration };
+   |                                          ^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` on by default
+
+warning: unused import: `anyhow`
+  --> examples/publisher.rs:22:29
+   |
+22 | use anyhow::{ Result, bail, anyhow };
+   |                             ^^^^^^
+
+warning: unused imports: `client::MoqIrohClient` and `proto::MediaInit`
+  --> examples/publisher.rs:26:22
+   |
+26 | use iroh_moq::moq::{ client::MoqIrohClient, proto::MediaInit, VideoStreaming };
+   |                      ^^^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^
+
+warning: unused import: `std::env`
+  --> examples/publisher.rs:32:5
+   |
+32 | use std::env;
+   |     ^^^^^^^^
+
+warning: unused import: `std::str::FromStr`
+  --> examples/publisher.rs:33:5
+   |
+33 | use std::str::FromStr;
+   |     ^^^^^^^^^^^^^^^^^
+
+warning: `iroh-moq` (example "publisher") generated 5 warnings (run `cargo fix --example "publisher"` to apply 5 suggestions)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.15s
+     Running `target/debug/examples/publisher`
+Publisher node ID: 4973308fa089d04836044b95759b461381d08fac94230941d8fd0db48641fcf0
+To connect, run the subscriber with: cargo run --example subscriber -- 4973308fa089d04836044b95759b461381d08fac94230941d8fd0db48641fcf0
+[2m2025-02-25T17:25:00.507378Z[0m [32m INFO[0m [2mpublisher[0m[2m:[0m Publisher node ID: 4973308fa089d04836044b95759b461381d08fac94230941d8fd0db48641fcf0
+[2m2025-02-25T17:25:00.836614Z[0m [32m INFO[0m [1mep[0m[1m{[0m[3mme[0m[2m=[0m4973308fa0[1m}[0m[2m:[0m[1mmagicsock[0m[2m:[0m[1mactor[0m[2m:[0m [2miroh::magicsock[0m[2m:[0m home is now relay https://use1-1.relay.iroh.network./, was None
+[2m2025-02-25T17:25:00.836704Z[0m [32m INFO[0m [1mpkarr_publish[0m[1m{[0m[3mme[0m[2m=[0m4973308fa0[1m}[0m[2m:[0m [2miroh::discovery::pkarr[0m[2m:[0m Publish node info to pkarr [3mrelay_url[0m[2m=[0mSome("https://use1-1.relay.iroh.network./") [3mpkarr_relay[0m[2m=[0mhttps://dns.iroh.link/pkarr
+[2m2025-02-25T17:25:00.841138Z[0m [32m INFO[0m [2mpublisher[0m[2m:[0m Initializing screen capture...
+[2m2025-02-25T17:25:00.998755Z[0m [32m INFO[0m [2mpublisher[0m[2m:[0m Capture dimensions: width=1496, height=966, stride=6016
+Publisher is ready to stream
+Starting video stream...
+[2m2025-02-25T17:25:00.998824Z[0m [32m INFO[0m [2miroh_moq::moq::video[0m[2m:[0m Publishing video stream with resolution 1496x967
+[2m2025-02-25T17:25:00.998864Z[0m [34mDEBUG[0m [2miroh_moq::moq::protocol[0m[2m:[0m Creating video stream with ID: a9335528-396b-4082-b1bb-5cb548f4417e in namespace: /live/hevc_test
+[2m2025-02-25T17:25:00.998874Z[0m [34mDEBUG[0m [2miroh_moq::moq::protocol[0m[2m:[0m Registering stream a9335528-396b-4082-b1bb-5cb548f4417e with engine
+[2m2025-02-25T17:25:00.998896Z[0m [34mDEBUG[0m [2miroh_moq::moq::engine[0m[2m:[0m Normalizing namespace '/live/hevc_test' to '/live/hevc_test'
+[2m2025-02-25T17:25:00.999046Z[0m [32m INFO[0m [2miroh_moq::moq::engine[0m[2m:[0m Starting stream actor for a9335528-396b-4082-b1bb-5cb548f4417e in namespace /live/hevc_test
+[2m2025-02-25T17:25:00.999043Z[0m [32m INFO[0m [2miroh_moq::moq::engine[0m[2m:[0m Connection state updated: Ready { node_id: PublicKey(4973308fa089d04836044b95759b461381d08fac94230941d8fd0db48641fcf0), stream_id: a9335528-396b-4082-b1bb-5cb548f4417e, namespace: "/live/hevc_test" }
+[2m2025-02-25T17:25:00.999070Z[0m [34mDEBUG[0m [2miroh_moq::moq::engine[0m[2m:[0m No active subscribers for connection state updates
+[2m2025-02-25T17:25:00.999080Z[0m [34mDEBUG[0m [2miroh_moq::moq::engine[0m[2m:[0m Registered stream: a9335528-396b-4082-b1bb-5cb548f4417e in namespace: /live/hevc_test
+[2m2025-02-25T17:25:00.999097Z[0m [32m INFO[0m [2miroh_moq::moq::engine[0m[2m:[0m Registered new stream: a9335528-396b-4082-b1bb-5cb548f4417e in namespace: /live/hevc_test
+[2m2025-02-25T17:25:00.999113Z[0m [34mDEBUG[0m [2miroh_moq::moq::protocol[0m[2m:[0m Announcing stream a9335528-396b-4082-b1bb-5cb548f4417e via gossip
+[2m2025-02-25T17:25:00.999121Z[0m [34mDEBUG[0m [2miroh_moq::moq::engine[0m[2m:[0m Storing init segment for stream a9335528-396b-4082-b1bb-5cb548f4417e
+[2m2025-02-25T17:25:05.166584Z[0m [32m INFO[0m [1mep[0m[1m{[0m[3mme[0m[2m=[0m4973308fa0[1m}[0m[2m:[0m[1mmagicsock[0m[2m:[0m[1mpoll_recv[0m[2m:[0m[1mpoll_recv_relay[0m[2m:[0m[1mdisco_in[0m[1m{[0m[3mnode[0m[2m=[0mc53031469a [3msrc[0m[2m=[0mRelay(https://use1-1.relay.iroh.network./, c53031469a)[1m}[0m[2m:[0m [2miroh::magicsock::node_map[0m[2m:[0m inserting new node in NodeMap [3mnode[0m[2m=[0mc53031469a [3mrelay_url[0m[2m=[0mSome(RelayUrl("https://use1-1.relay.iroh.network./")) [3msource[0m[2m=[0mrelay
+[2m2025-02-25T17:25:05.171058Z[0m [32m INFO[0m [1mep[0m[1m{[0m[3mme[0m[2m=[0m4973308fa0[1m}[0m[2m:[0m[1mmagicsock[0m[2m:[0m[1mpoll_recv[0m[2m:[0m[1mdisco_in[0m[1m{[0m[3mnode[0m[2m=[0mc53031469a [3msrc[0m[2m=[0mUdp([2603:8001:6b00:8cd:884:4b21:42cb:f2e]:54382)[1m}[0m[2m:[0m[1mhandle_pong[0m[1m{[0m[3mm[0m[2m=[0mPong { tx_id: TransactionId(0xDFD8A762273ABA52F90AD260), ping_observed_addr: Udp([2603:8001:6b00:8cd:884:4b21:42cb:f2e]:57634) } [3msrc[0m[2m=[0mUdp([2603:8001:6b00:8cd:884:4b21:42cb:f2e]:54382)[1m}[0m[2m:[0m [2miroh::magicsock::node_map::best_addr[0m[2m:[0m selecting new direct path for node [3maddr[0m[2m=[0m[2603:8001:6b00:8cd:884:4b21:42cb:f2e]:54382 [3mlatency[0m[2m=[0m3.757916ms [3mtrust_for[0m[2m=[0m6.499974916s
+[2m2025-02-25T17:25:05.242514Z[0m [32m INFO[0m [1mrouter.accept[0m[2m:[0m[1mtry_send[0m[2m:[0m[1mget_send_addrs[0m[1m{[0m[3mnode[0m[2m=[0mc53031469a[1m}[0m[2m:[0m [2miroh::magicsock::node_map::node_state[0m[2m:[0m new connection type [3mtyp[0m[2m=[0mdirect([2603:8001:6b00:8cd:884:4b21:42cb:f2e]:54382)
+[2m2025-02-25T17:25:05.260012Z[0m [34mDEBUG[0m [2miroh_moq::moq::protocol[0m[2m:[0m Announcement broadcast sent for stream a9335528-396b-4082-b1bb-5cb548f4417e
+[2m2025-02-25T17:25:05.279711Z[0m [32m INFO[0m [1mrouter.accept[0m[2m:[0m [2miroh_moq::moq::protocol[0m[2m:[0m Accepted MOQ-Iroh connection from: c53031469a94a7f0c40b323496836bba3f043a8abf80ffce1264ce59cfb2c8a3
+[2m2025-02-25T17:25:05.279806Z[0m [32m INFO[0m [1mrouter.accept[0m[2m:[0m [2miroh_moq::moq::engine[0m[2m:[0m Peer connected: c53031469a94a7f0c40b323496836bba3f043a8abf80ffce1264ce59cfb2c8a3
+[2m2025-02-25T17:25:05.279843Z[0m [32m INFO[0m [1mrouter.accept[0m[2m:[0m [2miroh_moq::moq::engine[0m[2m:[0m Connection state updated: Connected(PublicKey(c53031469a94a7f0c40b323496836bba3f043a8abf80ffce1264ce59cfb2c8a3))
+[2m2025-02-25T17:25:05.279876Z[0m [34mDEBUG[0m [1mrouter.accept[0m[2m:[0m [2miroh_moq::moq::engine[0m[2m:[0m No active subscribers for connection state updates
+[2m2025-02-25T17:25:05.279966Z[0m [32m INFO[0m [1mrouter.accept[0m[2m:[0m [2miroh_moq::moq::protocol[0m[2m:[0m Accepted control stream from c53031469a94a7f0c40b323496836bba3f043a8abf80ffce1264ce59cfb2c8a3
+[2m2025-02-25T17:25:05.280541Z[0m [34mDEBUG[0m [2miroh_moq::moq::protocol[0m[2m:[0m Received SUBSCRIBE message for stream a9335528-396b-4082-b1bb-5cb548f4417e namespace /live/hevc_test from c53031469a94a7f0c40b323496836bba3f043a8abf80ffce1264ce59cfb2c8a3
+[2m2025-02-25T17:25:05.280602Z[0m [32m INFO[0m [2miroh_moq::moq::engine[0m[2m:[0m Subscribing to stream a9335528-396b-4082-b1bb-5cb548f4417e in namespace /live/hevc_test from publisher c53031469a94a7f0c40b323496836bba3f043a8abf80ffce1264ce59cfb2c8a3
+[2m2025-02-25T17:25:05.280655Z[0m [34mDEBUG[0m [2miroh_moq::moq::engine[0m[2m:[0m Available stream actors: [(a9335528-396b-4082-b1bb-5cb548f4417e, "/live/hevc_test")]
+[2m2025-02-25T17:25:05.280679Z[0m [34mDEBUG[0m [2miroh_moq::moq::engine[0m[2m:[0m Found existing stream actor for key: (a9335528-396b-4082-b1bb-5cb548f4417e, "/live/hevc_test")
+[2m2025-02-25T17:25:05.280706Z[0m [34mDEBUG[0m [2miroh_moq::moq::engine[0m[2m:[0m Subscription registered for stream: a9335528-396b-4082-b1bb-5cb548f4417e in namespace: /live/hevc_test
+[2m2025-02-25T17:25:05.280739Z[0m [32m INFO[0m [2miroh_moq::moq::protocol[0m[2m:[0m Successfully registered subscription for stream: a9335528-396b-4082-b1bb-5cb548f4417e in namespace: /live/hevc_test
+[2m2025-02-25T17:25:05.280772Z[0m [32m INFO[0m [2miroh_moq::moq::protocol[0m[2m:[0m Sent SUBSCRIBE_OK response for stream: a9335528-396b-4082-b1bb-5cb548f4417e in namespace: /live/hevc_test
+[2m2025-02-25T17:25:05.280777Z[0m [34mDEBUG[0m [2miroh_moq::moq::engine[0m[2m:[0m Adding subscriber c53031469a94a7f0c40b323496836bba3f043a8abf80ffce1264ce59cfb2c8a3 with group_id 0 to stream a9335528-396b-4082-b1bb-5cb548f4417e
+[2m2025-02-25T17:25:05.282420Z[0m [32m INFO[0m [1mrouter.accept[0m[2m:[0m [2miroh_moq::moq::protocol[0m[2m:[0m Accepted data stream from c53031469a94a7f0c40b323496836bba3f043a8abf80ffce1264ce59cfb2c8a3
+[2m2025-02-25T17:25:05.282503Z[0m [34mDEBUG[0m [2miroh_moq::moq::protocol[0m[2m:[0m Read stream ID from data stream: a9335528-396b-4082-b1bb-5cb548f4417e
+[2m2025-02-25T17:25:05.282546Z[0m [34mDEBUG[0m [2miroh_moq::moq::protocol[0m[2m:[0m Read namespace length from data stream: 15
+[2m2025-02-25T17:25:05.282591Z[0m [34mDEBUG[0m [2miroh_moq::moq::protocol[0m[2m:[0m Read namespace from data stream: /live/hevc_test
+[2m2025-02-25T17:25:05.282607Z[0m [32m INFO[0m [2miroh_moq::moq::protocol[0m[2m:[0m Registering data stream with engine for stream_id: a9335528-396b-4082-b1bb-5cb548f4417e namespace: /live/hevc_test
+[2m2025-02-25T17:25:05.282638Z[0m [34mDEBUG[0m [2miroh_moq::moq::engine[0m[2m:[0m Normalizing namespace '/live/hevc_test' to '/live/hevc_test'
+[2m2025-02-25T17:25:05.282650Z[0m [34mDEBUG[0m [2miroh_moq::moq::engine[0m[2m:[0m Setting data stream for subscriber c53031469a94a7f0c40b323496836bba3f043a8abf80ffce1264ce59cfb2c8a3 in stream a9335528-396b-4082-b1bb-5cb548f4417e namespace /live/hevc_test
+[2m2025-02-25T17:25:05.282704Z[0m [34mDEBUG[0m [2miroh_moq::moq::engine[0m[2m:[0m Available stream actors when setting data stream: ["(a9335528-396b-4082-b1bb-5cb548f4417e, /live/hevc_test)"]
+[2m2025-02-25T17:25:05.282729Z[0m [32m INFO[0m [2miroh_moq::moq::protocol[0m[2m:[0m Successfully registered data stream for stream_id: a9335528-396b-4082-b1bb-5cb548f4417e
+[2m2025-02-25T17:25:05.282738Z[0m [32m INFO[0m [2miroh_moq::moq::protocol[0m[2m:[0m Keeping connection open for stream_id: a9335528-396b-4082-b1bb-5cb548f4417e
+[2m2025-02-25T17:25:05.282756Z[0m [34mDEBUG[0m [2miroh_moq::moq::protocol[0m[2m:[0m Remote closed data stream connection for stream_id: a9335528-396b-4082-b1bb-5cb548f4417e
+[2m2025-02-25T17:25:05.282749Z[0m [34mDEBUG[0m [2miroh_moq::moq::engine[0m[2m:[0m Setting data stream for subscriber c53031469a94a7f0c40b323496836bba3f043a8abf80ffce1264ce59cfb2c8a3 in stream a9335528-396b-4082-b1bb-5cb548f4417e
+[2m2025-02-25T17:25:05.282803Z[0m [32m INFO[0m [2miroh_moq::moq::engine[0m[2m:[0m SetDataStream for node_id=c53031469a94a7f0c40b323496836bba3f043a8abf80ffce1264ce59cfb2c8a3, subscriber found=true
+[2m2025-02-25T17:25:05.282834Z[0m [32m INFO[0m [2miroh_moq::moq::engine[0m[2m:[0m Data stream set for subscriber c53031469a94a7f0c40b323496836bba3f043a8abf80ffce1264ce59cfb2c8a3 with group_id=0 on stream a9335528-396b-4082-b1bb-5cb548f4417e
+[2m2025-02-25T17:25:05.282874Z[0m [32m INFO[0m [2miroh_moq::moq::engine[0m[2m:[0m Init segment status for subscriber c53031469a94a7f0c40b323496836bba3f043a8abf80ffce1264ce59cfb2c8a3: available=true, applies=true, group_id=0, init.group_id=3
+[2m2025-02-25T17:25:05.282898Z[0m [34mDEBUG[0m [2miroh_moq::moq::engine[0m[2m:[0m Sending init segment to new subscriber c53031469a94a7f0c40b323496836bba3f043a8abf80ffce1264ce59cfb2c8a3
+[2m2025-02-25T17:25:05.282962Z[0m [32m INFO[0m [2miroh_moq::moq::engine[0m[2m:[0m Successfully sent init segment to subscriber c53031469a94a7f0c40b323496836bba3f043a8abf80ffce1264ce59cfb2c8a3
+[2m2025-02-25T17:25:05.311511Z[0m [32m INFO[0m [2miroh_moq::moq::protocol[0m[2m:[0m Video stream a9335528-396b-4082-b1bb-5cb548f4417e successfully published
+[2m2025-02-25T17:25:05.311523Z[0m [34mDEBUG[0m [2miroh_moq::moq::protocol[0m[2m:[0m Starting video chunk processing for stream a9335528-396b-4082-b1bb-5cb548f4417e
+[2m2025-02-25T17:25:05.311589Z[0m [32m INFO[0m [2miroh_moq::moq::video[0m[2m:[0m Video stream published with ID: a9335528-396b-4082-b1bb-5cb548f4417e
+Streaming... Press Ctrl+C to stop
+[2m2025-02-25T17:25:05.437347Z[0m [32m INFO[0m [2miroh_moq::moq::video[0m[2m:[0m Video stream stats: 1 frames sent (7.96 fps), total: 1
+[2m2025-02-25T17:25:06.732672Z[0m [32m INFO[0m [2miroh_moq::moq::video[0m[2m:[0m Video stream stats: 30 frames sent (23.16 fps), total: 31
+[2m2025-02-25T17:25:07.884491Z[0m [32m INFO[0m [2miroh_moq::moq::video[0m[2m:[0m Video stream stats: 30 frames sent (26.05 fps), total: 61
+[2m2025-02-25T17:25:08.967721Z[0m [32m INFO[0m [2miroh_moq::moq::video[0m[2m:[0m Video stream stats: 30 frames sent (27.70 fps), total: 91
+[2m2025-02-25T17:25:10.100607Z[0m [32m INFO[0m [2miroh_moq::moq::video[0m[2m:[0m Video stream stats: 30 frames sent (26.48 fps), total: 121
+[2m2025-02-25T17:25:11.287513Z[0m [32m INFO[0m [2miroh_moq::moq::video[0m[2m:[0m Video stream stats: 30 frames sent (25.28 fps), total: 151
+[2m2025-02-25T17:25:12.441537Z[0m [32m INFO[0m [2miroh_moq::moq::video[0m[2m:[0m Video stream stats: 30 frames sent (26.00 fps), total: 181
+[2m2025-02-25T17:25:13.658071Z[0m [32m INFO[0m [2miroh_moq::moq::video[0m[2m:[0m Video stream stats: 30 frames sent (24.66 fps), total: 211
+[2m2025-02-25T17:25:14.861507Z[0m [32m INFO[0m [2miroh_moq::moq::video[0m[2m:[0m Video stream stats: 30 frames sent (24.93 fps), total: 241
+[2m2025-02-25T17:25:16.058351Z[0m [32m INFO[0m [2miroh_moq::moq::video[0m[2m:[0m Video stream stats: 30 frames sent (25.07 fps), total: 271
+[2m2025-02-25T17:25:17.166647Z[0m [32m INFO[0m [2miroh_moq::moq::video[0m[2m:[0m Video stream stats: 30 frames sent (27.07 fps), total: 301
+[2m2025-02-25T17:25:18.309511Z[0m [32m INFO[0m [2miroh_moq::moq::video[0m[2m:[0m Video stream stats: 30 frames sent (26.25 fps), total: 331
+[2m2025-02-25T17:25:19.507913Z[0m [32m INFO[0m [2miroh_moq::moq::video[0m[2m:[0m Video stream stats: 30 frames sent (25.03 fps), total: 361
+[2m2025-02-25T17:25:20.719181Z[0m [32m INFO[0m [2miroh_moq::moq::video[0m[2m:[0m Video stream stats: 30 frames sent (24.77 fps), total: 391
+[2m2025-02-25T17:25:21.745276Z[0m [32m INFO[0m [2miroh_moq::moq::video[0m[2m:[0m Video stream stats: 30 frames sent (29.24 fps), total: 421
+[2m2025-02-25T17:25:22.946331Z[0m [32m INFO[0m [2miroh_moq::moq::video[0m[2m:[0m Video stream stats: 30 frames sent (24.98 fps), total: 451
+[2m2025-02-25T17:25:24.036254Z[0m [32m INFO[0m [2miroh_moq::moq::video[0m[2m:[0m Video stream stats: 30 frames sent (27.53 fps), total: 481
+[2m2025-02-25T17:25:25.207601Z[0m [32m INFO[0m [2miroh_moq::moq::video[0m[2m:[0m Video stream stats: 30 frames sent (25.61 fps), total: 511
+[2m2025-02-25T17:25:26.323776Z[0m [32m INFO[0m [2miroh_moq::moq::video[0m[2m:[0m Video stream stats: 30 frames sent (26.88 fps), total: 541
+[2m2025-02-25T17:25:27.498505Z[0m [32m INFO[0m [2miroh_moq::moq::video[0m[2m:[0m Video stream stats: 30 frames sent (25.54 fps), total: 571
+[2m2025-02-25T17:25:28.674736Z[0m [32m INFO[0m [2miroh_moq::moq::video[0m[2m:[0m Video stream stats: 30 frames sent (25.51 fps), total: 601
+[2m2025-02-25T17:25:29.850067Z[0m [32m INFO[0m [2miroh_moq::moq::video[0m[2m:[0m Video stream stats: 30 frames sent (25.53 fps), total: 631
+[2m2025-02-25T17:25:30.992261Z[0m [32m INFO[0m [2miroh_moq::moq::video[0m[2m:[0m Video stream stats: 30 frames sent (26.27 fps), total: 661
+[2m2025-02-25T17:25:32.100478Z[0m [32m INFO[0m [2miroh_moq::moq::video[0m[2m:[0m Video stream stats: 30 frames sent (27.07 fps), total: 691
+[2m2025-02-25T17:25:33.206499Z[0m [32m INFO[0m [2miroh_moq::moq::video[0m[2m:[0m Video stream stats: 30 frames sent (27.13 fps), total: 721
+[2m2025-02-25T17:25:34.263900Z[0m [32m INFO[0m [2miroh_moq::moq::video[0m[2m:[0m Video stream stats: 30 frames sent (28.37 fps), total: 751
+[2m2025-02-25T17:25:35.336119Z[0m [32m INFO[0m [2miroh_moq::moq::video[0m[2m:[0m Video stream stats: 30 frames sent (27.98 fps), total: 781
+[2m2025-02-25T17:25:36.430367Z[0m [32m INFO[0m [2miroh_moq::moq::video[0m[2m:[0m Video stream stats: 30 frames sent (27.42 fps), total: 811
+[2m2025-02-25T17:25:37.541712Z[0m [32m INFO[0m [2miroh_moq::moq::video[0m[2m:[0m Video stream stats: 30 frames sent (27.00 fps), total: 841
+[2m2025-02-25T17:25:38.662265Z[0m [32m INFO[0m [2miroh_moq::moq::video[0m[2m:[0m Video stream stats: 30 frames sent (26.77 fps), total: 871
