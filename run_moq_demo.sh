@@ -106,10 +106,14 @@ while [ ! -f "$OUTPUT_FILE" ] && [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
   echo "Waiting for output file to be created ($ATTEMPT/$MAX_ATTEMPTS)..."
 done
 
+# Add a short pause before starting ffplay to allow initial data write
+echo "Output file detected, pausing briefly before playback..."
+sleep 1
+
 # Start ffplay with optimized parameters for low-latency streaming
 if [ -f "$OUTPUT_FILE" ]; then
   echo "Starting video playback..."
- ffplay -loglevel warning -fflags nobuffer -flags low_delay -framedrop -infbuf -i "$OUTPUT_FILE" -vf "setpts=N/(30*TB)" -threads 4 -probesize 32 -analyzeduration 0 -sync ext -af aresample=async=1 -x 1280 -y 720 -window_title "MOQ-Iroh Low-Latency Stream" &
+  ffplay -loglevel warning -fflags nobuffer -flags low_delay -framedrop -infbuf -i "$OUTPUT_FILE" -vf "setpts=N/(30*TB)" -threads 4 -probesize 32 -analyzeduration 0 -sync ext -af aresample=async=1 -x 1280 -y 720 -window_title "MOQ-Iroh Low-Latency Stream" &
   FFPLAY_PID=$!
 else
   echo "Error: Output file was not created. Cannot start playback."

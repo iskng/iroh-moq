@@ -11,9 +11,48 @@ use std::collections::{ HashMap, VecDeque };
 use dashmap::DashMap;
 use uuid::Uuid;
 use tokio::io::AsyncWriteExt;
+use std::time::Duration;
 
 // Constants
 const SLIDING_WINDOW_SIZE: usize = 100; // Max objects in retransmission buffer
+const DEFAULT_COMMAND_CHANNEL_SIZE: usize = 128;
+const SUBSCRIBE_COMMAND_CHANNEL_SIZE: usize = 512; // Potentially larger for subscribe bursts
+const OBJECT_SEND_TIMEOUT: Duration = Duration::from_secs(5);
+const OBJECT_FLUSH_TIMEOUT: Duration = Duration::from_secs(2);
+
+// State associated with a single stream actor
+#[derive(Debug)]
+struct StreamActorState {
+    subscribers: HashMap<NodeId, (u32, Option<SendStream>)>,
+    buffer: VecDeque<MoqObject>,
+    init_segment: Option<MoqObject>,
+    stream_id: Uuid,
+    namespace: String,
+}
+
+impl StreamActorState {
+    fn new(stream_id: Uuid, namespace: String) -> Self {
+        Self {
+            subscribers: HashMap::new(),
+            buffer: VecDeque::with_capacity(SLIDING_WINDOW_SIZE),
+            init_segment: None,
+            stream_id,
+            namespace,
+        }
+    }
+
+    // Helper to add object to buffer, handling init segment and size limit
+    fn add_object_to_buffer(&mut self, object: MoqObject) {
+        if object.group_id == (MEDIA_TYPE_INIT as u32) {
+            debug!("Storing init segment for stream {}", self.stream_id);
+            self.init_segment = Some(object.clone());
+        }
+        self.buffer.push_back(object);
+        if self.buffer.len() > SLIDING_WINDOW_SIZE {
+            self.buffer.pop_front();
+        }
+    }
+}
 
 // Connection state for the MOQ-Iroh protocol
 #[derive(Debug, Clone, PartialEq)]
@@ -126,7 +165,6 @@ impl MoqIrohEngine {
         namespace: String
     ) -> mpsc::Sender<MoqObject> {
         let normalized_ns = Self::normalize_namespace(&namespace);
-        debug!("Normalizing namespace '{}' to '{}'", namespace, normalized_ns);
 
         let key = (stream_id, normalized_ns.clone());
 
@@ -154,10 +192,10 @@ impl MoqIrohEngine {
         }
 
         // If no existing actor, create a new one
-        let (cmd_tx, cmd_rx) = mpsc::channel::<StreamCommand>(128);
+        let (cmd_tx, cmd_rx) = mpsc::channel::<StreamCommand>(DEFAULT_COMMAND_CHANNEL_SIZE);
 
         // Start the stream actor
-        tokio::spawn(Self::stream_actor(cmd_rx, stream_id, normalized_ns.clone()));
+        tokio::spawn(Self::stream_actor_loop(cmd_rx, stream_id, normalized_ns.clone()));
 
         // Store the command sender in our map
         self.stream_actors.insert(key, cmd_tx.clone());
@@ -169,11 +207,9 @@ impl MoqIrohEngine {
             namespace: normalized_ns.clone(),
         }).await;
 
-        debug!("Registered stream: {} in namespace: {}", stream_id, normalized_ns);
-
         // Create a channel that directly forwards to the stream actor
         // This simplifies the flow by avoiding the publish_object indirection
-        let (tx, mut rx) = mpsc::channel::<MoqObject>(128);
+        let (tx, mut rx) = mpsc::channel::<MoqObject>(DEFAULT_COMMAND_CHANNEL_SIZE);
         let cmd_tx_clone = cmd_tx.clone();
 
         tokio::spawn(async move {
@@ -212,10 +248,8 @@ impl MoqIrohEngine {
             .iter()
             .map(|e| e.key().clone())
             .collect();
-        debug!("Available stream actors: {:?}", available_actors);
 
         if let Some(tx) = self.stream_actors.get(&stream_key) {
-            debug!("Found existing stream actor for key: {:?}", stream_key);
             // Send subscribe command to actor
             let _ = tx
                 .send(StreamCommand::Subscribe {
@@ -224,10 +258,9 @@ impl MoqIrohEngine {
                 }).await
                 .map_err(|e| anyhow::anyhow!("Failed to send subscribe command: {}", e));
         } else {
-            debug!("Stream actor not found for key: {:?}", stream_key);
             // Create new stream actor for remote stream
-            let (cmd_tx, cmd_rx) = mpsc::channel(512);
-            tokio::spawn(Self::stream_actor(cmd_rx, stream_id, namespace.clone()));
+            let (cmd_tx, cmd_rx) = mpsc::channel(SUBSCRIBE_COMMAND_CHANNEL_SIZE);
+            tokio::spawn(Self::stream_actor_loop(cmd_rx, stream_id, namespace.clone()));
 
             // Register stream actor
             self.stream_actors.insert(stream_key, cmd_tx.clone());
@@ -241,8 +274,6 @@ impl MoqIrohEngine {
                 .map_err(|e| anyhow::anyhow!("Failed to send subscribe command: {}", e));
         }
 
-        debug!("Subscription registered for stream: {} in namespace: {}", stream_id, namespace);
-
         Ok(()) // No longer returning a receiver
     }
 
@@ -255,7 +286,6 @@ impl MoqIrohEngine {
         stream: SendStream
     ) -> Result<()> {
         let normalized_ns = Self::normalize_namespace(&namespace);
-        debug!("Normalizing namespace '{}' to '{}'", namespace, normalized_ns);
 
         debug!(
             "Setting data stream for subscriber {} in stream {} namespace {}",
@@ -263,13 +293,6 @@ impl MoqIrohEngine {
             stream_id,
             normalized_ns
         );
-
-        // Debug log all stream actors for troubleshooting
-        let keys: Vec<_> = self.stream_actors
-            .iter()
-            .map(|entry| format!("({}, {})", entry.key().0, entry.key().1))
-            .collect();
-        debug!("Available stream actors when setting data stream: {:?}", keys);
 
         if let Some(cmd_tx) = self.stream_actors.get(&(stream_id, normalized_ns.clone())) {
             if
@@ -301,7 +324,6 @@ impl MoqIrohEngine {
         sequence: u64
     ) -> Result<()> {
         let normalized_ns = Self::normalize_namespace(&namespace);
-        debug!("Normalizing namespace '{}' to '{}'", namespace, normalized_ns);
 
         debug!(
             "Requesting retransmission of sequence {} in stream {} for {}",
@@ -390,7 +412,6 @@ impl MoqIrohEngine {
         node_id: NodeId
     ) -> Result<()> {
         let normalized_ns = Self::normalize_namespace(&namespace);
-        debug!("Normalizing namespace '{}' to '{}'", namespace, normalized_ns);
 
         debug!(
             "Unsubscribing node {} from stream {} namespace {}",
@@ -411,190 +432,205 @@ impl MoqIrohEngine {
         Ok(())
     }
 
-    /// The stream actor function that processes commands for a single stream
-    async fn stream_actor(
+    /// The main loop for a stream actor, processing commands.
+    async fn stream_actor_loop(
         mut cmd_rx: mpsc::Receiver<StreamCommand>,
         stream_id: Uuid,
         namespace: String
     ) {
         info!("Starting stream actor for {} in namespace {}", stream_id, namespace);
 
-        // State for this stream
-        let mut subscribers: HashMap<NodeId, (u32, Option<SendStream>)> = HashMap::new();
-        let mut buffer: VecDeque<MoqObject> = VecDeque::with_capacity(SLIDING_WINDOW_SIZE);
-        let mut init_segment: Option<MoqObject> = None;
+        let mut state = StreamActorState::new(stream_id, namespace.clone());
 
         // Process commands until the channel is closed
         while let Some(cmd) = cmd_rx.recv().await {
             match cmd {
                 StreamCommand::PublishObject(object) => {
-                    // Store init segment if needed
-                    if object.group_id == (MEDIA_TYPE_INIT as u32) {
-                        debug!("Storing init segment for stream {}", stream_id);
-                        init_segment = Some(object.clone());
-                    }
-
-                    // Add to buffer, maintaining size limit
-                    buffer.push_back(object.clone());
-                    if buffer.len() > SLIDING_WINDOW_SIZE {
-                        buffer.pop_front();
-                    }
-
-                    // Send to all matching subscribers
-                    for (node_id, (group_id, data_stream_opt)) in &mut subscribers {
-                        let is_matching = *group_id == 0 || *group_id == object.group_id;
-
-                        if is_matching {
-                            // Try sending via data stream if available
-                            if let Some(data_stream) = data_stream_opt.as_mut() {
-                                if
-                                    let Err(e) = Self::send_object_to_stream(
-                                        data_stream,
-                                        &object
-                                    ).await
-                                {
-                                    error!(
-                                        "Failed to send object to subscriber {}: {}",
-                                        node_id,
-                                        e
-                                    );
-                                }
-                            } else {
-                                debug!("No data stream available for subscriber {}", node_id);
-                            }
-                        }
-                    }
+                    Self::handle_publish_object(&mut state, object).await;
                 }
                 StreamCommand::Subscribe { node_id, group_id } => {
-                    debug!(
-                        "Adding subscriber {} with group_id {} to stream {}",
-                        node_id,
-                        group_id,
-                        stream_id
-                    );
-                    subscribers.insert(node_id, (group_id, None));
+                    Self::handle_subscribe(&mut state, node_id, group_id);
                 }
                 StreamCommand::SetDataStream { node_id, stream } => {
-                    debug!(
-                        "Setting data stream for subscriber {} in stream {}",
-                        node_id,
-                        stream_id
-                    );
-
-                    let subscriber_found = subscribers.contains_key(&node_id);
-                    info!(
-                        "SetDataStream for node_id={}, subscriber found={}",
-                        node_id,
-                        subscriber_found
-                    );
-
-                    if let Some((group_id, data_stream_opt)) = subscribers.get_mut(&node_id) {
-                        // Set the data stream
-                        *data_stream_opt = Some(stream);
-                        info!(
-                            "Data stream set for subscriber {} with group_id={} on stream {}",
-                            node_id,
-                            group_id,
-                            stream_id
-                        );
-
-                        // Send init segment if available and applicable
-                        if let Some(init) = &init_segment {
-                            let applies = *group_id == 0 || *group_id == init.group_id;
-                            info!(
-                                "Init segment status for subscriber {}: available=true, applies={}, group_id={}, init.group_id={}",
-                                node_id,
-                                applies,
-                                group_id,
-                                init.group_id
-                            );
-
-                            if applies {
-                                if let Some(data_stream) = data_stream_opt.as_mut() {
-                                    debug!("Sending init segment to new subscriber {}", node_id);
-                                    if
-                                        let Err(e) = Self::send_object_to_stream(
-                                            data_stream,
-                                            init
-                                        ).await
-                                    {
-                                        error!(
-                                            "Failed to send init segment to subscriber {}: {}",
-                                            node_id,
-                                            e
-                                        );
-                                    } else {
-                                        info!("Successfully sent init segment to subscriber {}", node_id);
-                                    }
-                                }
-                            }
-                        } else {
-                            info!(
-                                "No init segment available yet for subscriber {} on stream {}",
-                                node_id,
-                                stream_id
-                            );
-                        }
-
-                        // Send buffered objects to the new subscriber
-                        if let Some(data_stream) = data_stream_opt.as_mut() {
-                            for obj in buffer.iter() {
-                                if *group_id == 0 || *group_id == obj.group_id {
-                                    if
-                                        let Err(e) = Self::send_object_to_stream(
-                                            data_stream,
-                                            obj
-                                        ).await
-                                    {
-                                        error!(
-                                            "Failed to send buffered object to subscriber {}: {}",
-                                            node_id,
-                                            e
-                                        );
-                                        break;
-                                    }
-                                }
-                            }
-                        }
-                    } else {
-                        error!("Subscriber {} not found when setting data stream", node_id);
-                    }
+                    Self::handle_set_data_stream(&mut state, node_id, stream).await;
                 }
                 StreamCommand::Unsubscribe(node_id) => {
-                    debug!("Removing subscriber {} from stream {}", node_id, stream_id);
-                    subscribers.remove(&node_id);
+                    Self::handle_unsubscribe(&mut state, node_id);
                 }
                 StreamCommand::RequestRetransmission { node_id, sequence } => {
-                    debug!(
-                        "Processing retransmission request for sequence {} from {}",
-                        sequence,
-                        node_id
-                    );
-
-                    if let Some(obj) = buffer.iter().find(|o| o.sequence == sequence) {
-                        if let Some((group_id, data_stream_opt)) = subscribers.get_mut(&node_id) {
-                            if *group_id == 0 || *group_id == obj.group_id {
-                                if let Some(data_stream) = data_stream_opt.as_mut() {
-                                    debug!("Retransmitting object with sequence {}", sequence);
-                                    if
-                                        let Err(e) = Self::send_object_to_stream(
-                                            data_stream,
-                                            obj
-                                        ).await
-                                    {
-                                        error!("Failed to retransmit object to {}: {}", node_id, e);
-                                    }
-                                }
-                            }
-                        }
-                    } else {
-                        debug!("Object with sequence {} not found for retransmission", sequence);
-                    }
+                    Self::handle_retransmission_request(&mut state, node_id, sequence).await;
                 }
             }
         }
 
         info!("Stream actor for {} in namespace {} terminated", stream_id, namespace);
+    }
+
+    /// Handles the PublishObject command for a stream actor.
+    async fn handle_publish_object(state: &mut StreamActorState, object: MoqObject) {
+        state.add_object_to_buffer(object.clone());
+
+        // Send to all matching subscribers
+        for (node_id, (group_id, data_stream_opt)) in &mut state.subscribers {
+            let is_matching = *group_id == 0 || *group_id == object.group_id;
+
+            if is_matching {
+                if let Some(data_stream) = data_stream_opt.as_mut() {
+                    if let Err(e) = Self::send_object_to_stream(data_stream, &object).await {
+                        error!(
+                            "Failed to send object seq {} to subscriber {}: {}",
+                            object.sequence,
+                            node_id,
+                            e
+                        );
+                        // Potential actions: Mark subscriber as unhealthy? Remove? For now, just log.
+                    }
+                } else {
+                    // This case might happen briefly between Subscribe and SetDataStream
+                    // Or if SetDataStream fails. Logging it might be too noisy.
+                    // debug!("No data stream available yet for subscriber {}", node_id);
+                }
+            }
+        }
+    }
+
+    /// Handles the Subscribe command for a stream actor.
+    fn handle_subscribe(state: &mut StreamActorState, node_id: NodeId, group_id: u32) {
+        debug!(
+            "Adding subscriber {} with group_id {} to stream {}",
+            node_id,
+            group_id,
+            state.stream_id
+        );
+        // Insert/update subscriber without a data stream initially.
+        state.subscribers.insert(node_id, (group_id, None));
+    }
+
+    /// Handles the SetDataStream command for a stream actor.
+    async fn handle_set_data_stream(
+        state: &mut StreamActorState,
+        node_id: NodeId,
+        mut stream: SendStream // Take ownership
+    ) {
+        debug!("Setting data stream for subscriber {} in stream {}", node_id, state.stream_id);
+
+        if let Some((group_id, data_stream_opt)) = state.subscribers.get_mut(&node_id) {
+            info!(
+                "Data stream established for subscriber {} (group_id {}) on stream {}",
+                node_id,
+                group_id,
+                state.stream_id
+            );
+
+            // Send init segment if available and applicable
+            if let Some(init) = &state.init_segment {
+                let applies = *group_id == 0 || *group_id == init.group_id;
+                if applies {
+                    debug!("Sending init segment to new subscriber {}", node_id);
+                    if let Err(e) = Self::send_object_to_stream(&mut stream, init).await {
+                        error!("Failed to send init segment to subscriber {}: {}", node_id, e);
+                        // If we fail to send the init segment, the subscriber might be broken.
+                        // We could remove the subscriber here, but let's keep it simple for now.
+                    } else {
+                        info!("Successfully sent init segment to subscriber {}", node_id);
+                    }
+                }
+            }
+
+            // Send buffered objects to the new subscriber
+            for obj in state.buffer.iter() {
+                // Check group ID match again for safety
+                if *group_id == 0 || *group_id == obj.group_id {
+                    if let Err(e) = Self::send_object_to_stream(&mut stream, obj).await {
+                        error!(
+                            "Failed to send buffered object seq {} to subscriber {}: {}",
+                            obj.sequence,
+                            node_id,
+                            e
+                        );
+                        // If sending buffer fails, stop sending more to this subscriber for now.
+                        break;
+                    }
+                }
+            }
+
+            // Store the stream only after successfully sending initial data
+            *data_stream_opt = Some(stream);
+        } else {
+            // This could happen if Unsubscribe is processed before SetDataStream arrives.
+            warn!(
+                "Subscriber {} not found when setting data stream for stream {}",
+                node_id,
+                state.stream_id
+            );
+            // Close the provided stream as it won't be used.
+            if let Err(e) = stream.finish() {
+                warn!("Failed to finish unused stream for {}: {}", node_id, e);
+            }
+        }
+    }
+
+    /// Handles the Unsubscribe command for a stream actor.
+    fn handle_unsubscribe(state: &mut StreamActorState, node_id: NodeId) {
+        debug!("Removing subscriber {} from stream {}", node_id, state.stream_id);
+        if let Some((_group_id, stream_opt)) = state.subscribers.remove(&node_id) {
+            // TODO: Should we try to close the SendStream here if it exists?
+            // `stream.finish()` might be needed, but requires async context.
+            // For now, we rely on the SendStream being dropped.
+            if stream_opt.is_some() {
+                debug!("Removed subscriber {} had an active data stream.", node_id);
+            }
+        } else {
+            debug!("Unsubscribe request for non-existent subscriber {}", node_id);
+        }
+    }
+
+    /// Handles the RequestRetransmission command for a stream actor.
+    async fn handle_retransmission_request(
+        state: &mut StreamActorState,
+        node_id: NodeId,
+        sequence: u64
+    ) {
+        debug!(
+            "Processing retransmission request for seq {} from {} on stream {}",
+            sequence,
+            node_id,
+            state.stream_id
+        );
+
+        if let Some((group_id, data_stream_opt)) = state.subscribers.get_mut(&node_id) {
+            if let Some(data_stream) = data_stream_opt.as_mut() {
+                // Find the object in the buffer
+                if let Some(obj) = state.buffer.iter().find(|o| o.sequence == sequence) {
+                    // Check if the group matches before sending
+                    if *group_id == 0 || *group_id == obj.group_id {
+                        debug!("Retransmitting object with sequence {} to {}", sequence, node_id);
+                        if let Err(e) = Self::send_object_to_stream(data_stream, obj).await {
+                            error!(
+                                "Failed to retransmit object seq {} to {}: {}",
+                                sequence,
+                                node_id,
+                                e
+                            );
+                        }
+                    } else {
+                        debug!(
+                            "Object seq {} found but group mismatch (sub: {}, obj: {}) for {}",
+                            sequence,
+                            group_id,
+                            obj.group_id,
+                            node_id
+                        );
+                    }
+                } else {
+                    debug!("Object with sequence {} not found in buffer for retransmission", sequence);
+                }
+            } else {
+                warn!("Cannot retransmit seq {} to {}: Data stream not set", sequence, node_id);
+            }
+        } else {
+            warn!("Cannot retransmit seq {}: Subscriber {} not found", sequence, node_id);
+        }
     }
 
     /// Sends a serialized MoqObject over a SendStream with error handling and metrics.
@@ -610,13 +646,73 @@ impl MoqIrohEngine {
     /// * `Ok(())` if the object was successfully sent
     /// * `Err` with a detailed error message if sending failed
     async fn send_object_to_stream(stream: &mut SendStream, object: &MoqObject) -> Result<()> {
-        // Start timing for metrics
         let start = std::time::Instant::now();
 
-        // Create a buffer with the serialized object
-        let mut serialized_data = Vec::new();
+        let serialized_data = match Self::serialize_object(object) {
+            Ok(data) => data,
+            Err(e) => {
+                error!("Serialization error for object seq {}: {}", object.sequence, e);
+                return Err(e);
+            }
+        };
+
+        // Send the serialized data over the stream with timeout
+        match
+            tokio::time::timeout(OBJECT_SEND_TIMEOUT, stream.write_all(&serialized_data)).await // Use constant
+        {
+            Ok(Ok(_)) => {
+                // Successfully wrote data, now flush with timeout
+                match
+                    tokio::time::timeout(OBJECT_FLUSH_TIMEOUT, stream.flush()).await // Use constant
+                {
+                    Ok(Ok(_)) => {
+                        let duration = start.elapsed();
+                        // Trace log is fine for performance debugging if needed via feature flag/level
+                        trace!(
+                            "Successfully sent object with sequence {} (size: {} bytes) in {:?}",
+                            object.sequence,
+                            serialized_data.len(),
+                            duration
+                        );
+                        Ok(())
+                    }
+                    Ok(Err(e)) => {
+                        // Handle flush error when timeout doesn't occur
+                        error!(
+                            "Failed to flush stream after sending object seq {}: {}",
+                            object.sequence,
+                            e
+                        );
+                        Err(e.into())
+                    }
+                    Err(_) => {
+                        error!("Timeout while flushing stream for object seq {}", object.sequence);
+                        Err(
+                            anyhow::anyhow!(
+                                "Flush operation timed out after {:?}",
+                                OBJECT_FLUSH_TIMEOUT
+                            )
+                        )
+                    }
+                }
+            }
+            Ok(Err(e)) => {
+                error!("Failed to send object with sequence {}: {}", object.sequence, e);
+                Err(e.into())
+            }
+            Err(_) => {
+                error!("Timeout while sending object with sequence {}", object.sequence);
+                Err(anyhow::anyhow!("Write operation timed out after {:?}", OBJECT_SEND_TIMEOUT))
+            }
+        }
+    }
+
+    /// Serializes a MoqObject into a byte vector with length prefixing.
+    fn serialize_object(object: &MoqObject) -> Result<Vec<u8>> {
+        let mut buffer = Vec::new();
 
         // Simple serialization format:
+        // - Total length (u32) [Added at the end]
         // - Object name length (u16) + Object name bytes
         // - Sequence number (u64)
         // - Timestamp (u64)
@@ -627,80 +723,36 @@ impl MoqIrohEngine {
         // Object name (length prefixed)
         let name_bytes = object.name.as_bytes();
         let name_len = name_bytes.len();
-        if name_len > 65535 {
-            error!("Object name too long: {} bytes", name_len);
-            bail!("Object name exceeds maximum length");
+        if name_len > (u16::MAX as usize) {
+            bail!("Object name too long: {} bytes (max {})", name_len, u16::MAX);
         }
-
-        serialized_data.extend_from_slice(&(name_len as u16).to_be_bytes());
-        serialized_data.extend_from_slice(name_bytes);
+        buffer.extend_from_slice(&(name_len as u16).to_be_bytes());
+        buffer.extend_from_slice(name_bytes);
 
         // Sequence, timestamp, group, priority
-        serialized_data.extend_from_slice(&object.sequence.to_be_bytes());
-        serialized_data.extend_from_slice(&object.timestamp.to_be_bytes());
-        serialized_data.extend_from_slice(&object.group_id.to_be_bytes());
-        serialized_data.push(object.priority);
+        buffer.extend_from_slice(&object.sequence.to_be_bytes());
+        buffer.extend_from_slice(&object.timestamp.to_be_bytes());
+        buffer.extend_from_slice(&object.group_id.to_be_bytes());
+        buffer.push(object.priority);
 
         // Data (length prefixed)
         let data_len = object.data.len();
-        serialized_data.extend_from_slice(&(data_len as u32).to_be_bytes());
-        serialized_data.extend_from_slice(&object.data);
-
-        // Add total length prefix
-        let total_len = serialized_data.len();
-        let mut final_data = Vec::with_capacity(4 + total_len);
-        final_data.extend_from_slice(&(total_len as u32).to_be_bytes());
-        final_data.extend(serialized_data);
-
-        // Send the serialized data over the stream with timeout
-
-        // Use a timeout to prevent hanging on network issues
-        match
-            tokio::time::timeout(
-                std::time::Duration::from_secs(5), // 5 second timeout
-                stream.write_all(&final_data)
-            ).await
-        {
-            Ok(Ok(_)) => {
-                // Successfully wrote data, now flush with timeout
-                match
-                    tokio::time::timeout(
-                        std::time::Duration::from_secs(2), // 2 second timeout for flush
-                        stream.flush()
-                    ).await
-                {
-                    Ok(Ok(_)) => {
-                        let duration = start.elapsed();
-                        trace!(
-                            "Successfully sent object with sequence {} (size: {} bytes) in {:?}",
-                            object.sequence,
-                            final_data.len(),
-                            duration
-                        );
-                        Ok(())
-                    }
-                    Ok(Err(e)) => {
-                        error!(
-                            "Failed to flush stream after sending object {}: {}",
-                            object.sequence,
-                            e
-                        );
-                        Err(e.into())
-                    }
-                    Err(_) => {
-                        error!("Timeout while flushing stream for object {}", object.sequence);
-                        Err(anyhow::anyhow!("Flush operation timed out"))
-                    }
-                }
-            }
-            Ok(Err(e)) => {
-                error!("Failed to send object with sequence {}: {}", object.sequence, e);
-                Err(e.into())
-            }
-            Err(_) => {
-                error!("Timeout while sending object with sequence {}", object.sequence);
-                Err(anyhow::anyhow!("Write operation timed out"))
-            }
+        if data_len > (u32::MAX as usize) {
+            // This is highly unlikely with typical network MTUs, but good practice to check.
+            bail!("Object data too large: {} bytes (max {})", data_len, u32::MAX);
         }
+        buffer.extend_from_slice(&(data_len as u32).to_be_bytes());
+        buffer.extend_from_slice(&object.data);
+
+        // Prepend total length
+        let total_inner_len = buffer.len();
+        if total_inner_len > (u32::MAX as usize) {
+            bail!("Total serialized object size exceeds limit: {} bytes", total_inner_len);
+        }
+        let mut final_data = Vec::with_capacity(4 + total_inner_len);
+        final_data.extend_from_slice(&(total_inner_len as u32).to_be_bytes());
+        final_data.extend(buffer);
+
+        Ok(final_data)
     }
 }
