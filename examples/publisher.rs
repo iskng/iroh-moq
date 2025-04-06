@@ -13,22 +13,23 @@ use screencapturekit::{
 use screencapturekit::output::MutLockTrait;
 use ffmpeg_next as ffmpeg;
 use ffmpeg::software::scaling::{ context::Context as Scaler, flag::Flags };
-use ffmpeg::codec::{ self, encoder, packet };
+use ffmpeg::codec::{ self, encoder, packet, Context as CodecContext };
 use ffmpeg::format::Pixel as FFmpegPixel;
 use ffmpeg::util::frame::video::Video as FfmpegFrame;
-use tracing::{ info, error };
+use ffmpeg::Rational;
+use tracing::{ info, error, warn, debug };
 use tracing_subscriber;
-use std::time::{ SystemTime, UNIX_EPOCH };
-use anyhow::{ Result, bail };
+use std::time::{ Duration, SystemTime, UNIX_EPOCH };
+use anyhow::{ Result, bail, anyhow };
 use tokio::sync::mpsc;
 use std::sync::{ Arc, Mutex };
-use async_trait::async_trait;
-use iroh_moq::moq::VideoStreaming;
+use iroh_moq::moq::proto::{ MediaInit, VideoChunk };
 use iroh_moq::moq::protocol::MoqIroh;
-use iroh_moq::moq::video::{ VideoSource, VideoFrame, VideoConfig };
+use iroh_moq::moq::video::VideoConfig;
 use iroh::{ Endpoint, SecretKey, NodeId };
 use iroh::protocol::Router;
 use rand::rngs::OsRng;
+use tokio_util::sync::CancellationToken;
 
 struct FrameHandler {
     sender: mpsc::Sender<CMSampleBuffer>,
@@ -42,7 +43,9 @@ impl SCStreamOutputTrait for FrameHandler {
         sample_buffer: CMSampleBuffer,
         _of_type: SCStreamOutputType
     ) {
-        let _ = self.sender.blocking_send(sample_buffer);
+        if let Err(e) = self.sender.try_send(sample_buffer) {
+            warn!("Failed to send frame to channel (likely full or closed): {}", e);
+        }
     }
 }
 
@@ -65,164 +68,76 @@ impl ScreenCapturer {
         }
 
         let display = &displays[0];
+        let width = (display.width() & !1) as u32;
+        let height = (display.height() & !1) as u32;
+
         let config = SCStreamConfiguration::new()
-            .set_width(display.width() as u32)
-            .map_err(|e| anyhow::anyhow!("Failed to set width: {}", e))?
-            .set_height(display.height() as u32)
-            .map_err(|e| anyhow::anyhow!("Failed to set height: {}", e))?
+            .set_width(width)
+            .map_err(|e| anyhow!("Failed to set width: {}", e))?
+            .set_height(height)
+            .map_err(|e| anyhow!("Failed to set height: {}", e))?
             .set_pixel_format(PixelFormat::BGRA)
-            .map_err(|e| anyhow::anyhow!("Failed to set pixel format: {}", e))?;
+            .map_err(|e| anyhow!("Failed to set pixel format: {}", e))?;
 
         let filter = SCContentFilter::new().with_display_excluding_windows(display, &[]);
-        let (tx, mut rx) = mpsc::channel(16);
+        let (tx, mut rx) = mpsc::channel(64);
 
-        let mut stream = SCStream::new_with_delegate(&filter, &config, FrameHandler {
-            sender: tx.clone(),
-        });
+        let delegate = FrameHandler { sender: tx.clone() };
+        let mut stream = SCStream::new(&filter, &config);
+
         stream.add_output_handler(FrameHandler { sender: tx }, SCStreamOutputType::Screen);
-
-        let width = display.width() as usize;
-        let height = display.height() as usize;
 
         if let Err(e) = stream.start_capture() {
             return Err(anyhow::anyhow!("Failed to start capture: {}", e));
         }
+        let display_id = display.display_id();
+        info!("Screen capture started for display {} ({}x{})", display_id, width, height);
 
-        let sample = rx.recv().await.ok_or_else(|| anyhow::anyhow!("Frame channel closed"))?;
-        let mut pixel_buffer = sample
-            .get_pixel_buffer()
-            .map_err(|e| anyhow::anyhow!("Failed to get pixel buffer: {}", e))?;
-        let guard = pixel_buffer
-            .lock_mut()
-            .map_err(|e| anyhow::anyhow!("Failed to lock pixel buffer: {}", e))?;
-        let first_frame_size = guard.as_slice().len();
-        let stride = first_frame_size / height;
+        let sample = rx.recv().await.ok_or_else(|| anyhow!("Frame channel closed prematurely"))?;
+        let stride = {
+            let mut pixel_buffer = sample
+                .get_pixel_buffer()
+                .map_err(|e| anyhow!("Failed to get pixel buffer for stride calculation: {}", e))?;
+            let stride = pixel_buffer.get_bytes_per_row() as usize;
+            let _guard = pixel_buffer
+                .lock_mut()
+                .map_err(|e| anyhow!("Failed to lock pixel buffer: {}", e))?;
+            stride
+        };
+
+        info!("Determined screen stride: {}", stride);
 
         Ok(Self {
             frame_rx: rx,
-            width,
-            height,
+            width: width as usize,
+            height: height as usize,
             stride,
             _stream: Arc::new(Mutex::new(stream)),
         })
     }
 
-    async fn capture_frame(&mut self) -> Result<Vec<u8>> {
-        let sample = self.frame_rx
-            .recv().await
-            .ok_or_else(|| anyhow::anyhow!("Frame channel closed"))?;
+    async fn capture_frame(&mut self) -> Result<(Vec<u8>, SystemTime)> {
+        let sample = self.frame_rx.recv().await.ok_or_else(|| anyhow!("Frame channel closed"))?;
+        let timestamp_value = SystemTime::now();
 
         let mut pixel_buffer = sample
             .get_pixel_buffer()
-            .map_err(|e| anyhow::anyhow!("Failed to get pixel buffer: {}", e))?;
-
+            .map_err(|e| anyhow!("Failed to get pixel buffer: {}", e))?;
         let guard = pixel_buffer
             .lock_mut()
-            .map_err(|e| anyhow::anyhow!("Failed to lock pixel buffer: {}", e))?;
+            .map_err(|e| anyhow!("Failed to lock pixel buffer: {}", e))?;
 
-        Ok(guard.as_slice().to_vec()) // BGRA data with padding
-    }
-}
-
-#[async_trait]
-impl VideoSource for ScreenCapturer {
-    async fn next_frame(&mut self) -> Result<VideoFrame> {
-        let bgra_data = self.capture_frame().await?;
-        // info!("Captured BGRA frame size: {} bytes", bgra_data.len());
-
-        let width = self.width & !1;
-        let height = self.height & !1;
-        let stride = self.stride;
-
-        // Initialize FFmpeg encoder for each frame (to avoid Send issues)
-        let codec = encoder
-            ::find_by_name("hevc_videotoolbox")
-            .ok_or_else(|| anyhow::anyhow!("HEVC VideoToolbox encoder not found"))?;
-        let mut encoder = codec::context::Context::new_with_codec(codec).encoder().video()?;
-        encoder.set_width(width as u32);
-        encoder.set_height(height as u32);
-        encoder.set_format(FFmpegPixel::YUV420P);
-        encoder.set_frame_rate(Some((30, 1)));
-        encoder.set_bit_rate(2_000_000);
-        encoder.set_time_base(ffmpeg::Rational(1, 90000));
-        encoder.set_color_range(ffmpeg::color::Range::MPEG);
-        encoder.set_gop(1);
-        let mut encoder = encoder.open_as(codec)?;
-
-        // Create BGRA frame
-        let mut bgra_frame = FfmpegFrame::new(FFmpegPixel::BGRA, width as u32, height as u32);
-        let dest_stride = bgra_frame.stride(0) as usize;
-
-        for row in 0..height {
-            let src_start = row * stride;
-            let src_end = src_start + width * 4;
-            let dest_start = row * dest_stride;
-            let dest_end = dest_start + width * 4;
-
-            if src_end > bgra_data.len() {
-                bail!(
-                    "Source frame data out of bounds: row={}, src_start={}, src_end={}, data_len={}",
-                    row,
-                    src_start,
-                    src_end,
-                    bgra_data.len()
-                );
-            }
-
-            if dest_end > bgra_frame.data_mut(0).len() {
-                bail!(
-                    "Destination frame data out of bounds: row={}, dest_start={}, dest_end={}, data_len={}",
-                    row,
-                    dest_start,
-                    dest_end,
-                    bgra_frame.data_mut(0).len()
-                );
-            }
-
-            bgra_frame
-                .data_mut(0)
-                [dest_start..dest_end].copy_from_slice(&bgra_data[src_start..src_end]);
+        let expected_size = self.height * self.stride;
+        let actual_size = guard.as_slice().len();
+        if actual_size < expected_size {
+            bail!(
+                "Pixel buffer size ({}) is smaller than expected ({}), potential data corruption.",
+                actual_size,
+                expected_size
+            );
         }
 
-        // Scale to YUV420P
-        let mut yuv_frame = FfmpegFrame::empty();
-        let mut scaler = Scaler::get(
-            FFmpegPixel::BGRA,
-            width as u32,
-            height as u32,
-            FFmpegPixel::YUV420P,
-            width as u32,
-            height as u32,
-            Flags::BILINEAR
-        )?;
-        scaler.run(&bgra_frame, &mut yuv_frame)?;
-
-        // Set timestamp
-        let ts = (SystemTime::now().duration_since(UNIX_EPOCH)?.as_micros() as i64) / 33333; // ~30fps
-        yuv_frame.set_pts(Some(ts));
-
-        // Encode to HEVC
-        encoder.send_frame(&yuv_frame)?;
-        let mut encoded_data = Vec::new();
-        let mut encoded_packet = packet::Packet::empty();
-        while encoder.receive_packet(&mut encoded_packet).is_ok() {
-            encoded_data.extend_from_slice(encoded_packet.data().unwrap());
-            encoded_packet = packet::Packet::empty();
-        }
-
-        // Flush encoder
-        encoder.send_eof()?;
-        while encoder.receive_packet(&mut encoded_packet).is_ok() {
-            encoded_data.extend_from_slice(encoded_packet.data().unwrap());
-            encoded_packet = packet::Packet::empty();
-        }
-
-        Ok(VideoFrame {
-            data: encoded_data,
-            width,
-            height,
-            timestamp: SystemTime::now(),
-        })
+        Ok((guard.as_slice()[..expected_size].to_vec(), timestamp_value))
     }
 
     fn width(&self) -> usize {
@@ -236,21 +151,20 @@ impl VideoSource for ScreenCapturer {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Set up tracing
     let filter = tracing_subscriber::filter::EnvFilter
         ::new("info")
         .add_directive("iroh_moq=debug".parse().unwrap());
     let subscriber = tracing_subscriber::fmt().with_env_filter(filter).with_target(true).finish();
     tracing::subscriber::set_global_default(subscriber)?;
 
-    // Set up publisher peer
+    ffmpeg::init().expect("Failed to initialize FFmpeg");
+
     let mut rng = OsRng;
     let secret_key = SecretKey::generate(&mut rng);
     let node_id: NodeId = secret_key.public().into();
     println!("Publisher node ID: {}", node_id);
     println!("To connect, run the subscriber with: cargo run --example subscriber -- {}", node_id);
 
-    // Print a more visible command that can be copied and pasted
     println!("\n=================================================================");
     println!("SUBSCRIBER COMMAND:");
     println!("RUST_LOG=debug cargo run --example subscriber -- {} -o output.mp4", node_id);
@@ -260,7 +174,6 @@ async fn main() -> Result<()> {
 
     info!("Publisher node ID: {}", node_id);
 
-    // Set up discovery
     let discovery = iroh::discovery::ConcurrentDiscovery::from_services(
         vec![
             Box::new(iroh::discovery::dns::DnsDiscovery::n0_dns()),
@@ -268,70 +181,328 @@ async fn main() -> Result<()> {
         ]
     );
 
-    // Set up endpoint
     let endpoint = Endpoint::builder()
         .secret_key(secret_key.clone())
         .discovery(Box::new(discovery))
         .alpns(vec![iroh_moq::moq::proto::ALPN.to_vec(), iroh_gossip::ALPN.to_vec()])
         .bind().await?;
 
-    // Set up gossip and MoQ
     let gossip = Arc::new(iroh_gossip::net::Gossip::builder().spawn(endpoint.clone()).await?);
     let moq = MoqIroh::builder().spawn(endpoint.clone(), gossip.clone()).await?;
     let client = moq.client();
 
-    // Set up router
     let router = Router::builder(endpoint.clone())
         .accept(iroh_moq::moq::proto::ALPN, moq)
         .accept(iroh_gossip::ALPN, gossip.clone())
         .spawn().await?;
     let _router = Arc::new(router);
 
-    // Initialize screen capturer
     info!("Initializing screen capture...");
-    let capturer = ScreenCapturer::new().await?;
-    let width = capturer.width & !1;
-    let height = capturer.height & !1;
+    let mut capturer = ScreenCapturer::new().await?;
+    let width = capturer.width() as u32;
+    let height = capturer.height() as u32;
     info!("Capture dimensions: width={}, height={}, stride={}", width, height, capturer.stride);
 
-    // Create video config
-    let config = VideoConfig {
+    let video_config = VideoConfig {
         codec: "hevc".to_string(),
         mime_type: "video/mp4".to_string(),
-        bitrate: 2_000_000,
+        bitrate: 5_000_000,
         frame_rate: 30.0,
-        keyframe_interval: 15,
+        keyframe_interval: 60,
     };
 
-    // Create initialization data
-    let init_segment = vec![0u8; 32]; // Placeholder; ideally SPS/PPS here
+    let codec = encoder
+        ::find_by_name("hevc_videotoolbox")
+        .ok_or_else(|| anyhow!("HEVC VideoToolbox encoder not found"))?;
+    let encoder_ctx = CodecContext::new_with_codec(codec);
+    let mut encoder = encoder_ctx.encoder().video()?;
 
-    // Print instructions
-    println!("Publisher is ready to stream");
+    encoder.set_width(width);
+    encoder.set_height(height);
+    encoder.set_format(FFmpegPixel::YUV420P);
+    encoder.set_time_base((1, 90000));
+    encoder.set_bit_rate(video_config.bitrate as usize);
+    encoder.set_frame_rate(Some((video_config.frame_rate as i32, 1)));
+    encoder.set_gop(video_config.keyframe_interval as u32);
 
-    // Start streaming video
-    println!("Starting video stream...");
-    let stream_handle = client.stream_video(
-        "/live/hevc_test".to_string(),
-        capturer,
-        config,
-        init_segment
-    ).await?;
+    // Open the encoder
+    let mut encoder = encoder.open_as(codec)?;
 
-    // Keep streaming until user interrupts
-    println!("Streaming... Press Ctrl+C to stop");
+    // Create an empty init segment by default
+    let mut init_segment = Vec::new();
 
-    // Wait for the streaming task to complete (or user interrupt)
-    match stream_handle.await {
-        Ok(result) => {
-            if let Err(e) = result {
-                error!("Streaming task error: {}", e);
+    // Try encoding a dummy frame to generate headers
+    info!("Sending dummy frame to generate initialization data...");
+    let mut dummy_frame = FfmpegFrame::new(FFmpegPixel::YUV420P, width, height);
+    dummy_frame.set_pts(Some(0));
+
+    // Send the dummy frame to the encoder
+    if let Err(e) = encoder.send_frame(&dummy_frame) {
+        warn!("Failed to send dummy frame: {}. Init segment might be missing.", e);
+    } else {
+        // Receive packet(s) from the dummy frame
+        let mut dummy_packet = packet::Packet::empty();
+        match encoder.receive_packet(&mut dummy_packet) {
+            Ok(_) => {
+                // Success! Use this packet data as our init segment
+                if let Some(data) = dummy_packet.data() {
+                    info!("Using first encoded packet ({} bytes) as init segment", data.len());
+                    init_segment = data.to_vec();
+                }
             }
-        }
-        Err(e) => {
-            error!("Failed to join streaming task: {}", e);
+            Err(e) => warn!("Error getting init packet: {}", e),
         }
     }
+
+    info!(
+        "Init segment size: {} bytes. Data prefix: {:02X?}",
+        init_segment.len(),
+        &init_segment.get(..std::cmp::min(init_segment.len(), 64)).unwrap_or(&[])
+    );
+    if init_segment.is_empty() {
+        warn!("Proceeding with empty init segment. Playback likely won't work.");
+    }
+
+    let init = MediaInit {
+        codec: video_config.codec.clone(),
+        mime_type: video_config.mime_type.clone(),
+        width,
+        height,
+        frame_rate: video_config.frame_rate,
+        bitrate: video_config.bitrate,
+        init_segment,
+    };
+
+    let namespace = "/live/hevc_test".to_string();
+    let (stream_id, chunk_sender) = client.publish_video_stream(namespace.clone(), init).await?;
+    info!("Published video stream {} with namespace {}", stream_id, namespace);
+
+    let mut scaler = Scaler::get(
+        FFmpegPixel::BGRA,
+        width,
+        height,
+        FFmpegPixel::YUV420P,
+        width,
+        height,
+        Flags::BILINEAR | Flags::PRINT_INFO
+    )?;
+    info!("FFmpeg scaler initialized: BGRA -> YUV420P");
+
+    let mut frame_count: u64 = 0;
+    let start_time = SystemTime::now();
+    let time_base = encoder.time_base();
+    let frame_duration_ts = ((time_base.1 as f64) / (video_config.frame_rate as f64)) as i64;
+    info!("Encoder timebase: {}/{}", time_base.0, time_base.1);
+    info!("Calculated frame duration in timebase units: {}", frame_duration_ts);
+
+    println!("Streaming... Press Ctrl+C to stop");
+    let shutdown_token = CancellationToken::new();
+    let shutdown_token_clone = shutdown_token.clone();
+
+    tokio::spawn(async move {
+        tokio::signal::ctrl_c().await.expect("Failed to install Ctrl+C handler");
+        println!("\nCtrl+C received, shutting down gracefully...");
+        shutdown_token_clone.cancel();
+    });
+
+    let mut last_stats_time = SystemTime::now();
+    let mut frames_since_last_stats = 0;
+
+    loop {
+        tokio::select! {
+            biased;
+
+            _ = shutdown_token.cancelled() => {
+                info!("Shutdown signal received, exiting streaming loop.");
+                break;
+            }
+
+            frame_result = capturer.capture_frame() => {
+                let (bgra_data, capture_timestamp) = match frame_result {
+                    Ok(data) => data,
+                    Err(e) => {
+                        error!("Failed to capture frame: {}", e);
+                        if e.to_string().contains("Frame channel closed") {
+                            info!("Capture channel closed, stopping.");
+                            break;
+                        }
+                        tokio::time::sleep(Duration::from_millis(100)).await;
+                        continue;
+                    }
+                };
+
+                let mut bgra_frame = FfmpegFrame::new(FFmpegPixel::BGRA, width, height);
+                let src_stride = capturer.stride;
+                let dest_stride = bgra_frame.stride(0) as usize;
+                let expected_bgra_len = height as usize * src_stride;
+
+                if bgra_data.len() < expected_bgra_len {
+                     error!(
+                        "BGRA data too small ({} bytes) for dimensions ({}x{}, stride {} = {} bytes expected). Skipping frame.",
+                        bgra_data.len(), width, height, src_stride, expected_bgra_len
+                     );
+                     continue;
+                }
+
+                for row in 0..height as usize {
+                    let src_start = row * src_stride;
+                    let src_end = src_start + width as usize * 4;
+                    let dest_start = row * dest_stride;
+                    let dest_end = dest_start + width as usize * 4;
+
+                    if src_end > bgra_data.len() {
+                         error!("Source frame bounds error during copy (row {}, src_end {}, data_len {}). Skipping frame.", row, src_end, bgra_data.len());
+                         continue;
+                    }
+                     if dest_end > bgra_frame.data_mut(0).len() {
+                         error!("Destination frame bounds error during copy (row {}, dest_end {}, data_len {}). Skipping frame.", row, dest_end, bgra_frame.data_mut(0).len());
+                         continue;
+                    }
+
+                    bgra_frame.data_mut(0)[dest_start..dest_end].copy_from_slice(&bgra_data[src_start..src_end]);
+                }
+
+                let mut yuv_frame = FfmpegFrame::empty();
+                if let Err(e) = scaler.run(&bgra_frame, &mut yuv_frame) {
+                    error!("Failed to scale frame: {}", e);
+                    continue;
+                }
+
+                let capture_ts_micros = capture_timestamp.duration_since(UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_micros() as u64;
+                let pts = frame_count as i64 * frame_duration_ts;
+                yuv_frame.set_pts(Some(pts));
+
+                if let Err(e) = encoder.send_frame(&yuv_frame) {
+                    error!("Failed to send frame to encoder: {}", e);
+                    continue;
+                }
+
+                let mut encoded_packet = packet::Packet::empty();
+                loop {
+                     match encoder.receive_packet(&mut encoded_packet) {
+                         Ok(_) => {
+                             if let Some(data) = encoded_packet.data() {
+                                 let is_keyframe = encoded_packet.is_key();
+                                 let packet_pts = encoded_packet.pts().unwrap_or(pts);
+                                 let chunk_ts_micros = capture_ts_micros;
+
+                                 let video_chunk = VideoChunk {
+                                     timestamp: chunk_ts_micros,
+                                     duration: (frame_duration_ts as f64 * time_base.0 as f64 / time_base.1 as f64 * 1_000_000.0) as u32,
+                                     is_keyframe,
+                                     dependency_sequence: None,
+                                     data: data.to_vec(),
+                                 };
+
+                                 debug!(
+                                     "Sending chunk: seq={}, ts={}, key={}, size={}",
+                                     frame_count, chunk_ts_micros, is_keyframe, data.len()
+                                 );
+
+                                 if chunk_sender.is_closed() {
+                                     info!("Chunk sender closed, likely subscriber disconnected.");
+                                     shutdown_token.cancel();
+                                     break;
+                                 }
+                                 if let Err(e) = chunk_sender.send(video_chunk).await {
+                                     error!("Failed to send video chunk via Moq: {}", e);
+                                     shutdown_token.cancel();
+                                     break;
+                                 }
+                             }
+                         }
+                     
+                          Err(ffmpeg_next::Error::Eof) => {
+                              info!("Encoder reached EOF during receive_packet.");
+                              shutdown_token.cancel();
+                              break;
+                          }
+                         Err(e) => {
+                             error!("Failed to receive packet from encoder: {}", e);
+                             shutdown_token.cancel();
+                             break;
+                         }
+                     }
+                     if shutdown_token.is_cancelled() { break; }
+                }
+
+                frame_count += 1;
+                frames_since_last_stats += 1;
+
+                if let Ok(elapsed) = SystemTime::now().duration_since(last_stats_time) {
+                     if elapsed >= Duration::from_secs(2) {
+                         let fps = (frames_since_last_stats as f64) / elapsed.as_secs_f64();
+                         info!(
+                             "Streaming stats: {:.2} fps ({} frames in {:.2}s), total frames: {}",
+                             fps, frames_since_last_stats, elapsed.as_secs_f64(), frame_count
+                         );
+                         last_stats_time = SystemTime::now();
+                         frames_since_last_stats = 0;
+                    }
+                }
+            }
+        }
+        if shutdown_token.is_cancelled() {
+            break;
+        }
+    }
+
+    info!("Flushing encoder...");
+    if let Err(e) = encoder.send_eof() {
+        error!("Failed to send EOF to encoder: {}", e);
+    } else {
+        let mut encoded_packet = packet::Packet::empty();
+        loop {
+            match encoder.receive_packet(&mut encoded_packet) {
+                Ok(_) => {
+                    if let Some(data) = encoded_packet.data() {
+                        let is_keyframe = encoded_packet.is_key();
+                        let packet_pts = encoded_packet
+                            .pts()
+                            .unwrap_or((frame_count as i64) * frame_duration_ts);
+                        let chunk_ts_micros = SystemTime::now()
+                            .duration_since(UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_micros() as u64;
+                        let video_chunk = VideoChunk {
+                            timestamp: chunk_ts_micros,
+                            duration: ((((frame_duration_ts as f64) * (time_base.0 as f64)) /
+                                (time_base.1 as f64)) *
+                                1_000_000.0) as u32,
+                            is_keyframe,
+                            dependency_sequence: None,
+                            data: data.to_vec(),
+                        };
+                        if !chunk_sender.is_closed() {
+                            let _ = chunk_sender.send(video_chunk).await;
+                        }
+                    }
+                }
+                Err(ffmpeg_next::Error::Eof) => {
+                    info!("Encoder flushed completely.");
+                    break;
+                }
+                Err(e) => {
+                    error!("Error receiving flushed packet: {}", e);
+                    break;
+                }
+            }
+        }
+    }
+
+    let total_duration = SystemTime::now().duration_since(start_time).unwrap_or_default();
+    info!(
+        "Streaming finished. Total frames: {}. Duration: {:.2}s. Average FPS: {:.2}",
+        frame_count,
+        total_duration.as_secs_f64(),
+        if total_duration.as_secs_f64() > 0.0 {
+            (frame_count as f64) / total_duration.as_secs_f64()
+        } else {
+            0.0
+        }
+    );
 
     Ok(())
 }
