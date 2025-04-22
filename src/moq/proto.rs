@@ -86,6 +86,24 @@ pub struct VideoChunk {
     pub data: Vec<u8>, // Actual video data (e.g. MP4 fragment)
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AudioInit {
+    pub codec: String, // e.g. "opus" or "aac"
+    pub mime_type: String, // e.g. "audio/opus" or "audio/mp4"
+    pub sample_rate: u32, // Samples per second (Hz)
+    pub channels: u8, // Number of audio channels (1 = mono, 2 = stereo, etc.)
+    pub bitrate: u32, // Target bitrate in bits per second
+    pub init_segment: Vec<u8>, // Codec specific config (ASC, Opus header, etc.)
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AudioChunk {
+    pub timestamp: u64, // Presentation timestamp in microseconds
+    pub duration: u32, // Duration in microseconds
+    pub is_key: bool, // For codecs where some frames are key (e.g. AAC with ADTS)
+    pub data: Vec<u8>, // Encoded audio frame payload
+}
+
 impl MoqObject {
     /// Create a new video object from a video chunk
     pub fn from_video_chunk(
@@ -158,6 +176,48 @@ impl MoqObject {
             dependency_sequence,
             data,
         })
+    }
+
+    /// Create a new audio object from an `AudioChunk`.
+    pub fn from_audio_chunk(
+        name: String,
+        sequence: u64,
+        chunk: AudioChunk,
+        _group_id: u32
+    ) -> Self {
+        let mut buffer = BytesMut::new();
+
+        // Serialize minimal metadata (timestamp, duration, key flag)
+        buffer.put_u64(chunk.timestamp);
+        buffer.put_u32(chunk.duration);
+        buffer.put_u8(if chunk.is_key { 1 } else { 0 });
+        // Payload
+        buffer.extend_from_slice(&chunk.data);
+
+        Self {
+            name,
+            sequence,
+            timestamp: chunk.timestamp,
+            group_id: MEDIA_TYPE_AUDIO as u32,
+            priority: 128,
+            data: buffer.to_vec(),
+        }
+    }
+
+    /// Try to convert this object into an `AudioChunk` if it is audio.
+    pub fn to_audio_chunk(&self) -> Result<AudioChunk> {
+        if self.group_id != (MEDIA_TYPE_AUDIO as u32) {
+            bail!("MoqObject is not audio");
+        }
+        let mut buf = BytesMut::from(&self.data[..]);
+        if buf.len() < 13 {
+            bail!("Audio chunk data too small");
+        }
+        let timestamp = buf.get_u64();
+        let duration = buf.get_u32();
+        let is_key = buf.get_u8() == 1;
+        let data = buf.to_vec();
+        Ok(AudioChunk { timestamp, duration, is_key, data })
     }
 }
 

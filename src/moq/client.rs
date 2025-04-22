@@ -21,6 +21,7 @@ use tokio_stream::wrappers::ReceiverStream;
 use std::time::Duration;
 use anyhow::bail;
 use crate::moq::subscriber;
+use crate::moq::proto::{ AudioInit, AudioChunk };
 
 /// A client for the iroh-moq protocol, providing a user-friendly interface
 /// that delegates stream operations to the engine via the protocol handler.
@@ -230,6 +231,43 @@ impl MoqIrohClient {
                 );
                 bail!("Subscription request timed out")
             }
+        }
+    }
+
+    /// Creates a new audio stream with initialization data.
+    pub async fn publish_audio_stream(
+        &self,
+        namespace: String,
+        init: AudioInit
+    ) -> Result<(Uuid, mpsc::Sender<AudioChunk>)> {
+        self.protocol.publish_audio_stream(namespace, init).await
+    }
+
+    /// Subscribes to an audio stream (using same announcement struct).
+    pub async fn subscribe_to_audio_stream(
+        &self,
+        announcement: StreamAnnouncement
+    ) -> Result<(mpsc::Receiver<AudioInit>, mpsc::Receiver<AudioChunk>)> {
+        info!(
+            "Client: Subscribing to audio stream {} in namespace {} from {}",
+            announcement.stream_id,
+            announcement.namespace,
+            announcement.sender_id
+        );
+
+        let timeout_duration = Duration::from_secs(10);
+        match
+            tokio::time::timeout(
+                timeout_duration,
+                subscriber::subscribe_to_audio_stream(
+                    self.endpoint.clone(),
+                    self.protocol.engine().clone(),
+                    announcement.clone()
+                )
+            ).await
+        {
+            Ok(res) => res,
+            Err(_) => { bail!("Audio subscription timed out") }
         }
     }
 }

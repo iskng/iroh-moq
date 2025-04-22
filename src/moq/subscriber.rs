@@ -8,6 +8,9 @@ use crate::moq::proto::{
     TYPE_SUBSCRIBE_OK,
     MEDIA_TYPE_INIT,
     MEDIA_TYPE_VIDEO,
+    AudioInit,
+    AudioChunk,
+    MEDIA_TYPE_AUDIO,
 };
 use crate::moq::engine::MoqIrohEngine;
 use anyhow::{ Result, bail, anyhow };
@@ -78,10 +81,14 @@ struct SubscriberActor {
     control_stream_send: Option<SendStream>,
     // Data stream - once established
     data_stream: Option<(SendStream, RecvStream)>,
-    // Media initialization output channel
-    init_tx: mpsc::Sender<MediaInit>,
-    // Video chunks output channel
-    chunk_tx: mpsc::Sender<VideoChunk>,
+    // Video initialization output channel (when is_audio == false)
+    init_tx: Option<mpsc::Sender<MediaInit>>,
+    // Video chunks output channel (when is_audio == false)
+    chunk_tx: Option<mpsc::Sender<VideoChunk>>,
+    // Audio initialization output channel (when is_audio == true)
+    audio_init_tx: Option<mpsc::Sender<AudioInit>>,
+    // Audio chunks output channel (when is_audio == true)
+    audio_chunk_tx: Option<mpsc::Sender<AudioChunk>>,
     // Command channel - for sending commands to self
     cmd_tx: mpsc::Sender<SubscriberCommand>,
     // Command receiver
@@ -90,6 +97,8 @@ struct SubscriberActor {
     engine: Arc<MoqIrohEngine>,
     // Endpoint for establishing connections
     endpoint: Arc<Endpoint>,
+    // Whether this actor is handling an audio-only subscription
+    is_audio: bool,
 }
 
 impl SubscriberActor {
@@ -122,13 +131,16 @@ impl SubscriberActor {
             connection: None,
             control_stream: None,
             data_stream: None,
-            init_tx,
-            chunk_tx,
+            init_tx: Some(init_tx),
+            chunk_tx: Some(chunk_tx),
             cmd_tx: cmd_tx.clone(),
             cmd_rx,
             engine,
             endpoint,
             control_stream_send: None,
+            audio_init_tx: None,
+            audio_chunk_tx: None,
+            is_audio: false,
         };
 
         // Start the actor's state machine in a separate task
@@ -583,10 +595,12 @@ impl SubscriberActor {
                     init_segment: object.data,
                 };
 
-                if let Err(e) = self.init_tx.send(init).await {
-                    error!("Failed to send init segment to receiver: {}", e);
-                    self.handle_terminate(anyhow!("Failed to send init segment: {}", e)).await;
-                    return;
+                if let Some(ref mut init_tx) = self.init_tx {
+                    if let Err(e) = init_tx.send(init).await {
+                        error!("Failed to send init segment to receiver: {}", e);
+                        self.handle_terminate(anyhow!("Failed to send init segment: {}", e)).await;
+                        return;
+                    }
                 }
 
                 info!("Init segment received and forwarded for stream {}", self.stream_id);
@@ -602,17 +616,40 @@ impl SubscriberActor {
                 // Convert to VideoChunk
                 match Self::object_to_video_chunk(&object) {
                     Ok(chunk) => {
-                        if let Err(e) = self.chunk_tx.send(chunk).await {
-                            debug!("Video chunk receiver closed: {}", e);
-                            self.handle_terminate(
-                                anyhow!("Video chunk receiver closed: {}", e)
-                            ).await;
-                            return;
+                        if let Some(ref mut chunk_tx) = self.chunk_tx {
+                            if let Err(e) = chunk_tx.send(chunk).await {
+                                debug!("Video chunk receiver closed: {}", e);
+                                self.handle_terminate(
+                                    anyhow!("Video chunk receiver closed: {}", e)
+                                ).await;
+                                return;
+                            }
                         }
                     }
                     Err(e) => {
                         error!("Failed to parse video chunk from object: {}", e);
                         // Don't terminate for a single failed chunk
+                    }
+                }
+            }
+            g if g == (MEDIA_TYPE_AUDIO as u32) => {
+                // Audio track handling
+                if self.audio_init_tx.is_none() {
+                    // Treat first audio init similarly
+                    let ainit = self.build_audio_init(object.data.clone());
+                    if let Some(ref mut init_tx) = self.audio_init_tx {
+                        let _ = init_tx.send(ainit).await;
+                    }
+                    return;
+                }
+                match Self::object_to_audio_chunk(&object) {
+                    Ok(chunk) => {
+                        if let Some(ref mut a_tx) = self.audio_chunk_tx {
+                            let _ = a_tx.send(chunk).await;
+                        }
+                    }
+                    Err(e) => {
+                        error!("Failed to parse audio chunk: {}", e);
                     }
                 }
             }
@@ -651,6 +688,77 @@ impl SubscriberActor {
         };
 
         Ok(chunk)
+    }
+
+    fn object_to_audio_chunk(object: &MoqObject) -> Result<AudioChunk> {
+        // For now use priority not used
+        let chunk = AudioChunk {
+            timestamp: object.timestamp,
+            duration: 0, // Unknown
+            is_key: true,
+            data: object.data.clone(),
+        };
+        Ok(chunk)
+    }
+
+    /// helper to convert init for audio
+    fn build_audio_init(&self, data: Vec<u8>) -> AudioInit {
+        AudioInit {
+            codec: self.announcement.codec.clone(),
+            mime_type: format!("audio/{}", self.announcement.codec),
+            sample_rate: self.announcement.framerate, // not ideal
+            channels: 1,
+            bitrate: self.announcement.bitrate,
+            init_segment: data,
+        }
+    }
+
+    async fn new_audio(
+        endpoint: Arc<Endpoint>,
+        engine: Arc<MoqIrohEngine>,
+        announcement: StreamAnnouncement
+    ) -> Result<(mpsc::Receiver<AudioInit>, mpsc::Receiver<AudioChunk>)> {
+        info!(
+            "Creating AUDIO subscriber actor for stream {} from {}",
+            announcement.stream_id,
+            announcement.sender_id
+        );
+
+        let (init_tx, init_rx) = mpsc::channel::<AudioInit>(10);
+        let (chunk_tx, chunk_rx) = mpsc::channel::<AudioChunk>(1024);
+
+        let (cmd_tx, cmd_rx) = mpsc::channel::<SubscriberCommand>(100);
+
+        let mut actor = SubscriberActor {
+            state: SubscriberState::Initial,
+            publisher_id: announcement.sender_id,
+            stream_id: announcement.stream_id,
+            namespace: announcement.namespace.clone(),
+            announcement: announcement.clone(),
+            connection: None,
+            control_stream: None,
+            control_stream_send: None,
+            data_stream: None,
+            init_tx: None,
+            chunk_tx: None,
+            audio_init_tx: Some(init_tx),
+            audio_chunk_tx: Some(chunk_tx),
+            cmd_tx: cmd_tx.clone(),
+            cmd_rx,
+            engine,
+            endpoint,
+            is_audio: true,
+        };
+
+        tokio::spawn(async move {
+            actor.run().await;
+        });
+
+        if let Err(e) = cmd_tx.send(SubscriberCommand::Connect).await {
+            bail!("Failed to start audio subscriber actor: {}", e);
+        }
+
+        Ok((init_rx, chunk_rx))
     }
 }
 
@@ -772,4 +880,13 @@ pub async fn subscribe_to_video_stream(
 
     // Create the subscriber actor and await the result
     SubscriberActor::new(endpoint, engine, announcement).await
+}
+
+/// Subscribe to an audio stream using the actor
+pub async fn subscribe_to_audio_stream(
+    endpoint: Arc<Endpoint>,
+    engine: Arc<MoqIrohEngine>,
+    announcement: StreamAnnouncement
+) -> Result<(mpsc::Receiver<AudioInit>, mpsc::Receiver<AudioChunk>)> {
+    SubscriberActor::new_audio(endpoint, engine, announcement).await
 }

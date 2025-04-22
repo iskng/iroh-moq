@@ -12,12 +12,14 @@ pub mod proto;
 pub mod protocol;
 pub mod video;
 pub mod subscriber;
+pub mod audio;
 
 pub use client::MoqIrohClient;
 pub use engine::MoqIrohEngine;
 pub use protocol::{ MoqIroh, MoqIrohConfig };
 pub use video::{ VideoSource, VideoFrame, VideoConfig, VideoStreaming };
 pub use subscriber::subscribe_to_video_stream;
+pub use audio::{ AudioSource, AudioFrame, AudioConfig, AudioStreaming };
 
 // Ensure all necessary traits and types are available
 pub use iroh::protocol::ProtocolHandler;

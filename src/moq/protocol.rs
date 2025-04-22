@@ -29,6 +29,9 @@ use crate::moq::proto::{
     TYPE_TERMINATE,
     TYPE_UNSUBSCRIBE,
     TYPE_SUBSCRIBE_OK,
+    AudioInit,
+    AudioChunk,
+    MEDIA_TYPE_AUDIO,
 };
 use iroh::endpoint::{ Connecting, Connection, SendStream, RecvStream };
 use iroh::protocol::ProtocolHandler;
@@ -475,6 +478,76 @@ impl MoqIroh {
         });
 
         info!("Video stream {} successfully published", stream_id);
+        Ok((stream_id, chunk_tx))
+    }
+
+    /// Publishes an audio stream.
+    /// Returns (stream_id, sender for audio chunks)
+    pub async fn publish_audio_stream(
+        &self,
+        namespace: String,
+        init: AudioInit
+    ) -> Result<(Uuid, mpsc::Sender<AudioChunk>)> {
+        // Generate a stream_id (reuse video pattern)
+        let stream_id = Uuid::new_v4();
+        let normalized_ns = namespace.clone();
+
+        // Register stream first
+        let object_tx = self.engine.register_stream(stream_id, normalized_ns.clone()).await;
+
+        // Send init segment as MoqObject
+        let init_object = MoqObject {
+            name: format!("{}/audio_init", normalized_ns),
+            sequence: 0,
+            timestamp: SystemTime::now().duration_since(UNIX_EPOCH)?.as_micros() as u64,
+            group_id: MEDIA_TYPE_INIT as u32,
+            priority: 255,
+            data: init.init_segment.clone(),
+        };
+
+        if let Err(e) = object_tx.send(init_object).await {
+            error!("Failed to send audio init segment: {}", e);
+            bail!("Failed to send audio initialization segment");
+        }
+
+        // Build and broadcast announcement (reuse StreamAnnouncement but keep video fields maybe mismatch). We'll still broadcast but set resolution (0,0) etc.
+        let announcement = StreamAnnouncement {
+            stream_id,
+            sender_id: self.engine.endpoint().node_id(),
+            namespace: normalized_ns.clone(),
+            codec: init.codec.clone(),
+            resolution: (0, 0),
+            framerate: 0,
+            bitrate: init.bitrate,
+            timestamp: SystemTime::now().duration_since(UNIX_EPOCH)?.as_micros() as u64,
+            relay_ids: vec![],
+        };
+        let topic_id = blake3::hash(ANNOUNCE_TOPIC).into();
+        let topic = self.engine.gossip().subscribe_and_join(topic_id, vec![]).await?;
+        let msg = serialize_announce(&announcement)?;
+        let _ = topic.broadcast(msg.into()).await;
+
+        // create channel for chunks
+        let (chunk_tx, mut chunk_rx) = mpsc::channel::<AudioChunk>(512);
+        let object_tx_clone = object_tx.clone();
+        tokio::spawn(async move {
+            let mut sequence = 1u64;
+            while let Some(chunk) = chunk_rx.recv().await {
+                let object = MoqObject {
+                    name: format!("{}/audio_{}", normalized_ns, sequence),
+                    sequence,
+                    timestamp: chunk.timestamp,
+                    group_id: MEDIA_TYPE_AUDIO as u32,
+                    priority: 128,
+                    data: chunk.data,
+                };
+                sequence += 1;
+                if let Err(e) = object_tx_clone.send(object).await {
+                    error!("Failed to send audio object: {}", e);
+                    break;
+                }
+            }
+        });
         Ok((stream_id, chunk_tx))
     }
 
