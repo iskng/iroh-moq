@@ -1,52 +1,50 @@
-use crate::moq::engine::{ MoqIrohEngine, ConnectionState, ConnectionEvent };
+use crate::moq::engine::{ ConnectionEvent, ConnectionState, MoqIrohEngine };
 use crate::moq::proto::{
-    StreamAnnouncement,
-    MoqObject,
-    ANNOUNCE_TOPIC,
     deserialize_announce,
-    MediaInit,
-    VideoChunk,
-    serialize_announce,
-    ALPN,
-    MEDIA_TYPE_INIT,
-    MEDIA_TYPE_VIDEO,
     deserialize_cancel,
     deserialize_heartbeat,
     deserialize_request,
     deserialize_subscribe,
     deserialize_terminate,
     deserialize_unsubscribe,
+    serialize_announce,
     serialize_heartbeat,
     serialize_request,
+    serialize_subscribe_ok,
     serialize_terminate,
     serialize_unsubscribe,
-    serialize_subscribe_ok,
+    AudioInit,
+    MediaInit,
+    MoqObject,
+    StreamAnnouncement,
+    VideoChunk,
+    ALPN,
+    ANNOUNCE_TOPIC,
+    MEDIA_TYPE_INIT,
+    MEDIA_TYPE_VIDEO,
     TYPE_CANCEL,
     TYPE_HEARTBEAT,
     TYPE_OBJECT,
     TYPE_REQUEST,
     TYPE_SUBSCRIBE,
+    TYPE_SUBSCRIBE_OK,
     TYPE_TERMINATE,
     TYPE_UNSUBSCRIBE,
-    TYPE_SUBSCRIBE_OK,
-    AudioInit,
-    AudioChunk,
-    MEDIA_TYPE_AUDIO,
 };
-use iroh::endpoint::{ Connecting, Connection, SendStream, RecvStream };
+use anyhow::{ bail, Result };
+use blake3;
+use bytes::{ Buf, BytesMut };
+use futures::{ future::BoxFuture, StreamExt };
+use iroh::endpoint::{ Connection, RecvStream, SendStream };
 use iroh::protocol::ProtocolHandler;
 use iroh::{ Endpoint, NodeId };
-use anyhow::{ Result, bail };
-use iroh_gossip::net::{ Gossip, Event, GossipEvent };
-use tokio::sync::{ mpsc, broadcast };
-use uuid::Uuid;
+use iroh_gossip::net::{ Event, Gossip, GossipEvent };
 use std::sync::Arc;
-use futures::{ future::BoxFuture, StreamExt };
-use blake3;
-use std::time::{ SystemTime, UNIX_EPOCH, Duration };
-use tracing::{ info, error, debug, warn, trace };
-use bytes::{ BytesMut, Buf };
+use std::time::{ Duration, SystemTime, UNIX_EPOCH };
 use tokio::io::AsyncWriteExt;
+use tokio::sync::{ broadcast, mpsc };
+use tracing::{ debug, error, info, trace, warn };
+use uuid::Uuid;
 
 use super::MoqIrohClient;
 use crate::moq::subscriber;
@@ -98,9 +96,7 @@ impl Builder {
 
 impl Default for Builder {
     fn default() -> Self {
-        Self {
-            config: None,
-        }
+        Self { config: None }
     }
 }
 
@@ -487,15 +483,15 @@ impl MoqIroh {
         &self,
         namespace: String,
         init: AudioInit
-    ) -> Result<(Uuid, mpsc::Sender<AudioChunk>)> {
+    ) -> Result<(Uuid, mpsc::Sender<MoqObject>)> {
         // Generate a stream_id (reuse video pattern)
         let stream_id = Uuid::new_v4();
         let normalized_ns = namespace.clone();
 
-        // Register stream first
-        let object_tx = self.engine.register_stream(stream_id, normalized_ns.clone()).await;
+        // Register stream first, get the sender to the engine's stream actor
+        let engine_object_tx = self.engine.register_stream(stream_id, normalized_ns.clone()).await;
 
-        // Send init segment as MoqObject
+        // Send init segment as MoqObject via the engine sender
         let init_object = MoqObject {
             name: format!("{}/audio_init", normalized_ns),
             sequence: 0,
@@ -505,12 +501,12 @@ impl MoqIroh {
             data: init.init_segment.clone(),
         };
 
-        if let Err(e) = object_tx.send(init_object).await {
-            error!("Failed to send audio init segment: {}", e);
+        if let Err(e) = engine_object_tx.send(init_object).await {
+            error!("Failed to send audio init segment via engine: {}", e);
             bail!("Failed to send audio initialization segment");
         }
 
-        // Build and broadcast announcement (reuse StreamAnnouncement but keep video fields maybe mismatch). We'll still broadcast but set resolution (0,0) etc.
+        // Broadcast announcement (same as before)
         let announcement = StreamAnnouncement {
             stream_id,
             sender_id: self.engine.endpoint().node_id(),
@@ -527,28 +523,34 @@ impl MoqIroh {
         let msg = serialize_announce(&announcement)?;
         let _ = topic.broadcast(msg.into()).await;
 
-        // create channel for chunks
-        let (chunk_tx, mut chunk_rx) = mpsc::channel::<AudioChunk>(512);
-        let object_tx_clone = object_tx.clone();
+        // Create a NEW channel specifically for the application (stream_audio) to send objects
+        let (app_object_tx, mut app_object_rx) = mpsc::channel::<MoqObject>(512);
+
+        // Clone the sender that goes to the engine's stream actor
+        let engine_object_tx_clone = engine_object_tx.clone();
+
+        // Spawn a task that bridges the app channel to the engine channel
         tokio::spawn(async move {
-            let mut sequence = 1u64;
-            while let Some(chunk) = chunk_rx.recv().await {
-                let object = MoqObject {
-                    name: format!("{}/audio_{}", normalized_ns, sequence),
-                    sequence,
-                    timestamp: chunk.timestamp,
-                    group_id: MEDIA_TYPE_AUDIO as u32,
-                    priority: 128,
-                    data: chunk.data,
-                };
-                sequence += 1;
-                if let Err(e) = object_tx_clone.send(object).await {
-                    error!("Failed to send audio object: {}", e);
-                    break;
+            // Read objects from the application (sent by stream_audio)
+            while let Some(object) = app_object_rx.recv().await {
+                // Send the object to the engine's stream actor
+                if let Err(e) = engine_object_tx_clone.send(object).await {
+                    error!(
+                        "Failed to forward MoqObject from app to engine for stream {}: {}",
+                        stream_id,
+                        e
+                    );
+                    break; // Stop forwarding if engine channel fails
                 }
             }
+            // When app_object_rx closes (because stream_audio drops app_object_tx),
+            // this task terminates. The engine_object_tx_clone is dropped here.
+            // This signals the engine's stream actor that this particular source has finished.
+            info!("Application object forwarding loop finished for stream {}", stream_id);
         });
-        Ok((stream_id, chunk_tx))
+
+        // Return the sender side of the NEW application channel
+        Ok((stream_id, app_object_tx))
     }
 
     /// Subscribes to a video stream from the announcement
@@ -561,7 +563,7 @@ impl MoqIroh {
     pub async fn subscribe_to_video_stream(
         &self,
         announcement: StreamAnnouncement
-    ) -> Result<(mpsc::Receiver<MediaInit>, mpsc::Receiver<VideoChunk>)> {
+    ) -> Result<(mpsc::Receiver<MediaInit>, mpsc::Receiver<Option<VideoChunk>>)> {
         // Use the new subscriber actor implementation
         subscriber::subscribe_to_video_stream(
             self.engine.endpoint().clone(),
@@ -659,11 +661,14 @@ impl MoqIroh {
             }
 
             match msg_type {
-                TYPE_SUBSCRIBE =>
-                    self.handle_subscribe_message(buffer, send, remote_id, conn).await?,
+                TYPE_SUBSCRIBE => {
+                    self.handle_subscribe_message(buffer, send, remote_id, conn).await?;
+                }
                 TYPE_SUBSCRIBE_OK => self.handle_subscribe_ok_message(buffer, remote_id).await?,
                 TYPE_TERMINATE => self.handle_terminate_message(buffer).await?,
-                TYPE_HEARTBEAT => self.handle_heartbeat_message(buffer, send, remote_id).await?,
+                TYPE_HEARTBEAT => {
+                    self.handle_heartbeat_message(buffer, send, remote_id).await?;
+                }
                 TYPE_REQUEST => self.handle_request_message(buffer, remote_id).await?,
                 TYPE_UNSUBSCRIBE => self.handle_unsubscribe_message(buffer).await?,
                 TYPE_CANCEL => self.handle_cancel_message(buffer).await?,
@@ -1000,14 +1005,13 @@ impl ProtocolHandler for MoqIroh {
     /// Handles incoming connections by accepting them and setting up control/data streams.
     ///
     /// # Arguments
-    /// - `connecting`: The incoming connection to handle.
+    /// - `conn`: The incoming connection to handle.
     ///
     /// # Returns
     /// A future that resolves to Ok if the connection was handled successfully, or an error.
-    fn accept(&self, connecting: Connecting) -> BoxFuture<'static, Result<()>> {
+    fn accept(&self, conn: Connection) -> BoxFuture<'static, Result<()>> {
         let protocol = self.clone();
         Box::pin(async move {
-            let conn = connecting.await?;
             let remote_id = conn.remote_node_id()?;
             info!("Accepted MOQ-Iroh connection from: {}", remote_id.to_string());
 

@@ -1,27 +1,23 @@
 use super::proto::{
-    StreamAnnouncement,
-    MediaInit,
-    VideoChunk,
-    deserialize_announce,
-    ANNOUNCE_TOPIC,
+    deserialize_announce, MediaInit, MoqObject, StreamAnnouncement, VideoChunk, ANNOUNCE_TOPIC,
 };
 use super::protocol::MoqIroh;
 use crate::moq::engine::ConnectionState;
+use crate::moq::proto::{AudioChunk, AudioInit};
+use crate::moq::subscriber;
+use anyhow::bail;
 use anyhow::Result;
+use blake3;
 use futures::StreamExt;
 use iroh::Endpoint;
 use iroh::NodeId;
-use iroh_gossip::net::{ Gossip, Event, GossipEvent };
-use tokio::sync::{ mpsc, broadcast };
+use iroh_gossip::net::{Event, Gossip, GossipEvent};
 use std::sync::Arc;
-use tracing::{ info, debug, error };
-use uuid::Uuid;
-use blake3;
-use tokio_stream::wrappers::ReceiverStream;
 use std::time::Duration;
-use anyhow::bail;
-use crate::moq::subscriber;
-use crate::moq::proto::{ AudioInit, AudioChunk };
+use tokio::sync::{broadcast, mpsc};
+use tokio_stream::wrappers::ReceiverStream;
+use tracing::{debug, error, info};
+use uuid::Uuid;
 
 /// A client for the iroh-moq protocol, providing a user-friendly interface
 /// that delegates stream operations to the engine via the protocol handler.
@@ -40,7 +36,11 @@ impl MoqIrohClient {
     /// - `gossip`: The gossip protocol instance for stream announcements.
     /// - `protocol`: The `MoqIroh` protocol handler that manages the engine.
     pub fn new(endpoint: Arc<Endpoint>, gossip: Arc<Gossip>, protocol: MoqIroh) -> Self {
-        Self { protocol, endpoint, gossip }
+        Self {
+            protocol,
+            endpoint,
+            gossip,
+        }
     }
 
     /// Returns the node's unique identifier.
@@ -63,10 +63,12 @@ impl MoqIrohClient {
         publisher_id: NodeId,
         stream_id: Uuid,
         namespace: String,
-        sequence: u64
+        sequence: u64,
     ) -> Result<()> {
         // Use protocol to request retransmission
-        self.protocol.request_object(publisher_id, stream_id, namespace, sequence).await
+        self.protocol
+            .request_object(publisher_id, stream_id, namespace, sequence)
+            .await
     }
 
     /// Monitors for new stream announcements from a specific sender.
@@ -78,7 +80,7 @@ impl MoqIrohClient {
     /// A stream of announcements that can be polled for new streams.
     pub async fn monitor_streams(
         &self,
-        sender_id: NodeId
+        sender_id: NodeId,
     ) -> Result<impl futures::Stream<Item = StreamAnnouncement>> {
         // Create a channel for announcements
         let (tx, rx) = mpsc::channel::<StreamAnnouncement>(32);
@@ -86,7 +88,10 @@ impl MoqIrohClient {
         // Subscribe to announcements via gossip
         let topic_id = blake3::hash(ANNOUNCE_TOPIC).into();
         info!("Subscribing to announcements via gossip on sub side");
-        let mut topic = self.gossip.subscribe_and_join(topic_id, vec![sender_id]).await?;
+        let mut topic = self
+            .gossip
+            .subscribe_and_join(topic_id, vec![sender_id])
+            .await?;
 
         // Spawn a task to listen for announcements and send them to the channel
         tokio::spawn(async move {
@@ -97,8 +102,7 @@ impl MoqIrohClient {
                         if announcement.sender_id == sender_id {
                             debug!(
                                 "Received stream announcement: {} in {}",
-                                announcement.stream_id,
-                                announcement.namespace
+                                announcement.stream_id, announcement.namespace
                             );
                             if tx.send(announcement).await.is_err() {
                                 // Receiver dropped, exit the loop
@@ -127,10 +131,12 @@ impl MoqIrohClient {
         &self,
         node_id: NodeId,
         stream_id: Uuid,
-        namespace: String
+        namespace: String,
     ) -> Result<()> {
         // Use protocol to unsubscribe
-        self.protocol.send_unsubscribe(node_id, stream_id, namespace).await
+        self.protocol
+            .send_unsubscribe(node_id, stream_id, namespace)
+            .await
     }
 
     /// Terminates a stream connection.
@@ -167,7 +173,7 @@ impl MoqIrohClient {
     pub async fn publish_video_stream(
         &self,
         namespace: String,
-        init: MediaInit
+        init: MediaInit,
     ) -> Result<(Uuid, mpsc::Sender<VideoChunk>)> {
         // Use protocol to publish video stream
         self.protocol.publish_video_stream(namespace, init).await
@@ -182,47 +188,45 @@ impl MoqIrohClient {
     /// A tuple containing receivers for the initialization segment and video chunks.
     pub async fn subscribe_to_video_stream(
         &self,
-        announcement: StreamAnnouncement
-    ) -> Result<(mpsc::Receiver<MediaInit>, mpsc::Receiver<VideoChunk>)> {
+        announcement: StreamAnnouncement,
+    ) -> Result<(
+        mpsc::Receiver<MediaInit>,
+        mpsc::Receiver<Option<VideoChunk>>,
+    )> {
         info!(
             "Client: Directly subscribing to video stream {} in namespace {} from {}",
-            announcement.stream_id,
-            announcement.namespace,
-            announcement.sender_id
+            announcement.stream_id, announcement.namespace, announcement.sender_id
         );
 
         // Add tracing for timeout handling
         let timeout_duration = Duration::from_secs(10);
-        match
-            tokio::time::timeout(
-                timeout_duration,
-                // Directly use the subscriber module instead of going through protocol
-                subscriber::subscribe_to_video_stream(
-                    self.endpoint.clone(),
-                    self.protocol.engine().clone(), // Use the getter method
-                    announcement.clone()
-                )
-            ).await
+        match tokio::time::timeout(
+            timeout_duration,
+            // Directly use the subscriber module instead of going through protocol
+            subscriber::subscribe_to_video_stream(
+                self.endpoint.clone(),
+                self.protocol.engine().clone(), // Use the getter method
+                announcement.clone(),
+            ),
+        )
+        .await
         {
-            Ok(result) => {
-                match result {
-                    Ok(receivers) => {
-                        info!(
-                            "Client: Successfully subscribed to video stream {}",
-                            announcement.stream_id
-                        );
-                        Ok(receivers)
-                    }
-                    Err(e) => {
-                        error!(
-                            "Client: Subscriber actor returned error for subscription to {}: {}",
-                            announcement.stream_id,
-                            e
-                        );
-                        Err(e)
-                    }
+            Ok(result) => match result {
+                Ok(receivers) => {
+                    info!(
+                        "Client: Successfully subscribed to video stream {}",
+                        announcement.stream_id
+                    );
+                    Ok(receivers)
                 }
-            }
+                Err(e) => {
+                    error!(
+                        "Client: Subscriber actor returned error for subscription to {}: {}",
+                        announcement.stream_id, e
+                    );
+                    Err(e)
+                }
+            },
             Err(_) => {
                 error!(
                     "Client: Timeout after {}s waiting to subscribe to stream {}",
@@ -238,36 +242,39 @@ impl MoqIrohClient {
     pub async fn publish_audio_stream(
         &self,
         namespace: String,
-        init: AudioInit
-    ) -> Result<(Uuid, mpsc::Sender<AudioChunk>)> {
+        init: AudioInit,
+    ) -> Result<(Uuid, mpsc::Sender<MoqObject>)> {
         self.protocol.publish_audio_stream(namespace, init).await
     }
 
     /// Subscribes to an audio stream (using same announcement struct).
     pub async fn subscribe_to_audio_stream(
         &self,
-        announcement: StreamAnnouncement
-    ) -> Result<(mpsc::Receiver<AudioInit>, mpsc::Receiver<AudioChunk>)> {
+        announcement: StreamAnnouncement,
+    ) -> Result<(
+        mpsc::Receiver<AudioInit>,
+        mpsc::Receiver<Option<AudioChunk>>,
+    )> {
         info!(
             "Client: Subscribing to audio stream {} in namespace {} from {}",
-            announcement.stream_id,
-            announcement.namespace,
-            announcement.sender_id
+            announcement.stream_id, announcement.namespace, announcement.sender_id
         );
 
         let timeout_duration = Duration::from_secs(10);
-        match
-            tokio::time::timeout(
-                timeout_duration,
-                subscriber::subscribe_to_audio_stream(
-                    self.endpoint.clone(),
-                    self.protocol.engine().clone(),
-                    announcement.clone()
-                )
-            ).await
+        match tokio::time::timeout(
+            timeout_duration,
+            subscriber::subscribe_to_audio_stream(
+                self.endpoint.clone(),
+                self.protocol.engine().clone(),
+                announcement.clone(),
+            ),
+        )
+        .await
         {
             Ok(res) => res,
-            Err(_) => { bail!("Audio subscription timed out") }
+            Err(_) => {
+                bail!("Audio subscription timed out")
+            }
         }
     }
 }

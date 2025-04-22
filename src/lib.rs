@@ -9,7 +9,7 @@
 pub mod moq;
 
 pub use moq::client::MoqIrohClient;
-pub use moq::proto::{ MoqObject, MoqRelay, StreamAnnouncement, ANNOUNCE_TOPIC, ALPN };
+pub use moq::proto::{MoqObject, MoqRelay, StreamAnnouncement, ALPN, ANNOUNCE_TOPIC};
 pub use moq::protocol::MoqIroh;
 
 // Ensure all necessary traits and types are available

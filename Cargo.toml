@@ -4,9 +4,9 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-quic-rpc = "0.18" # For QUIC-based RPC communication
-iroh = "0.32" # Core Iroh library for Endpoint and NodeId
-iroh-gossip = { version = "0.32", features = [
+quic-rpc = "0.19.0" # For QUIC-based RPC communication
+iroh = "0.34" # Core Iroh library for Endpoint and NodeId
+iroh-gossip = { version = "0.34", features = [
   "rpc",
 ] } # Gossip protocol for signaling
 serde = { version = "1", features = ["derive"] } # Serialization for messages
@@ -22,7 +22,7 @@ futures = "0.3" # Async streams and futures
 futures-lite = "2.3.0" # Lightweight futures for streams
 anyhow = "1.0.79" # Error handling
 tracing = "0.1.40" # Logging and debugging
-tracing-subscriber = "0.3.18" # Subscriber for tracing
+tracing-subscriber = { version = "0.3.18", features = ["fmt", "env-filter"] } # Subscriber for tracing
 uuid = { version = "1.10", features = ["v4", "serde"] } # UUID for stream IDs
 blake3 = "1.5.5" # Hashing for gossip topics
 async-stream = "0.3" # For creating async streams
@@ -36,6 +36,9 @@ byteorder = "1.5.0"
 thiserror = "2.0.11"
 chrono = "0.4"   # For formatting timestamps
 clap = { version = "4.5.31", features = ["derive"] }
+hound = "3.5"
+ezk-g722 = { git = "https://github.com/kbalt/ezk-media.git" }
+
 
 [features]
 default = []

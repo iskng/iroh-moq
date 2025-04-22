@@ -1,10 +1,10 @@
-use anyhow::{ bail, Result, anyhow };
+use anyhow::{anyhow, bail, Result};
 use blake3;
-use bytes::{ Buf, BufMut, BytesMut };
+use bytes::{Buf, BufMut, BytesMut};
 use iroh::PublicKey;
-use serde::{ Deserialize, Serialize };
-use uuid::Uuid;
+use serde::{Deserialize, Serialize};
 use tracing::info;
+use uuid::Uuid;
 
 // Protocol Constants
 pub const ALPN: &[u8] = b"iroh-moq/v1";
@@ -27,48 +27,51 @@ pub const TYPE_OBJECT: u8 = 0x10;
 pub const REASON_NORMAL: u8 = 0;
 pub const REASON_ERROR: u8 = 1;
 
-// Media-specific constants
+// Media-specific constants - Assign distinct values
+pub const MEDIA_TYPE_INIT: u8 = 0x00;
 pub const MEDIA_TYPE_VIDEO: u8 = 0x01;
 pub const MEDIA_TYPE_AUDIO: u8 = 0x02;
-pub const MEDIA_TYPE_INIT: u8 = 0x03;
+
+// Special Group ID to signal End-of-Segment (EOS) within a stream
+pub const MEDIA_TYPE_EOF: u32 = u32::MAX;
 
 // Gossip Announcement
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct StreamAnnouncement {
-    pub stream_id: Uuid, // Unique identifier for the stream
-    pub sender_id: PublicKey, // NodeId of the sender (serialized)
-    pub namespace: String, // e.g., "/live/video"
-    pub codec: String, // e.g., "h264"
+    pub stream_id: Uuid,        // Unique identifier for the stream
+    pub sender_id: PublicKey,   // NodeId of the sender (serialized)
+    pub namespace: String,      // e.g., "/live/video"
+    pub codec: String,          // e.g., "h264"
     pub resolution: (u32, u32), // Width, height
-    pub framerate: u32, // Frames per second
-    pub bitrate: u32, // Bits per second
-    pub timestamp: u64, // Start time (microseconds since epoch)
+    pub framerate: u32,         // Frames per second
+    pub bitrate: u32,           // Bits per second
+    pub timestamp: u64,         // Start time (microseconds since epoch)
     pub relay_ids: Vec<String>, // Optional relay NodeIds
 }
 
 // Data Object
 #[derive(Debug, Clone)]
 pub struct MoqObject {
-    pub name: String, // e.g., "/live/video/chunk1"
-    pub sequence: u64, // Sequence number for ordering
+    pub name: String,   // e.g., "/live/video/chunk1"
+    pub sequence: u64,  // Sequence number for ordering
     pub timestamp: u64, // Timestamp (microseconds)
-    pub group_id: u32, // Track identifier (e.g., 1=video, 2=audio)
-    pub priority: u8, // Priority (0-255, higher is more urgent)
-    pub data: Vec<u8>, // Compressed chunk data
+    pub group_id: u32,  // Track identifier (e.g., 1=video, 2=audio)
+    pub priority: u8,   // Priority (0-255, higher is more urgent)
+    pub data: Vec<u8>,  // Compressed chunk data
 }
 
 // Relay Information
 #[derive(Debug, Clone)]
 pub struct MoqRelay {
-    pub relay_id: String, // NodeId of the relay
-    pub stream_id: Uuid, // Stream being relayed
+    pub relay_id: String,  // NodeId of the relay
+    pub stream_id: Uuid,   // Stream being relayed
     pub namespace: String, // Namespace being relayed
 }
 
 // Media-specific structures
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MediaInit {
-    pub codec: String, // e.g. "avc1.64001f" for H.264
+    pub codec: String,     // e.g. "avc1.64001f" for H.264
     pub mime_type: String, // e.g. "video/mp4"
     pub width: u32,
     pub height: u32,
@@ -79,29 +82,29 @@ pub struct MediaInit {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VideoChunk {
-    pub timestamp: u64, // Presentation timestamp
-    pub duration: u32, // Duration in timescale units
-    pub is_keyframe: bool, // Whether this is a keyframe/IDR
+    pub timestamp: u64,                   // Presentation timestamp
+    pub duration: u32,                    // Duration in timescale units
+    pub is_keyframe: bool,                // Whether this is a keyframe/IDR
     pub dependency_sequence: Option<u64>, // Sequence number this chunk depends on
-    pub data: Vec<u8>, // Actual video data (e.g. MP4 fragment)
+    pub data: Vec<u8>,                    // Actual video data (e.g. MP4 fragment)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AudioInit {
-    pub codec: String, // e.g. "opus" or "aac"
-    pub mime_type: String, // e.g. "audio/opus" or "audio/mp4"
-    pub sample_rate: u32, // Samples per second (Hz)
-    pub channels: u8, // Number of audio channels (1 = mono, 2 = stereo, etc.)
-    pub bitrate: u32, // Target bitrate in bits per second
+    pub codec: String,         // e.g. "opus" or "aac"
+    pub mime_type: String,     // e.g. "audio/opus" or "audio/mp4"
+    pub sample_rate: u32,      // Samples per second (Hz)
+    pub channels: u8,          // Number of audio channels (1 = mono, 2 = stereo, etc.)
+    pub bitrate: u32,          // Target bitrate in bits per second
     pub init_segment: Vec<u8>, // Codec specific config (ASC, Opus header, etc.)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AudioChunk {
     pub timestamp: u64, // Presentation timestamp in microseconds
-    pub duration: u32, // Duration in microseconds
-    pub is_key: bool, // For codecs where some frames are key (e.g. AAC with ADTS)
-    pub data: Vec<u8>, // Encoded audio frame payload
+    pub duration: u32,  // Duration in microseconds
+    pub is_key: bool,   // For codecs where some frames are key (e.g. AAC with ADTS)
+    pub data: Vec<u8>,  // Encoded audio frame payload
 }
 
 impl MoqObject {
@@ -110,7 +113,7 @@ impl MoqObject {
         name: String,
         sequence: u64,
         chunk: VideoChunk,
-        _group_id: u32
+        _group_id: u32,
     ) -> Self {
         // Create a buffer to serialize the video chunk
         let mut buffer = BytesMut::new();
@@ -135,11 +138,7 @@ impl MoqObject {
             sequence,
             timestamp: chunk.timestamp,
             group_id: MEDIA_TYPE_VIDEO as u32, // Always use the constant
-            priority: if chunk.is_keyframe {
-                255
-            } else {
-                128
-            },
+            priority: if chunk.is_keyframe { 255 } else { 128 },
             data: buffer.to_vec(),
         }
     }
@@ -183,7 +182,7 @@ impl MoqObject {
         name: String,
         sequence: u64,
         chunk: AudioChunk,
-        _group_id: u32
+        _group_id: u32,
     ) -> Self {
         let mut buffer = BytesMut::new();
 
@@ -217,7 +216,12 @@ impl MoqObject {
         let duration = buf.get_u32();
         let is_key = buf.get_u8() == 1;
         let data = buf.to_vec();
-        Ok(AudioChunk { timestamp, duration, is_key, data })
+        Ok(AudioChunk {
+            timestamp,
+            duration,
+            is_key,
+            data,
+        })
     }
 }
 
@@ -235,7 +239,7 @@ pub fn serialize_subscribe(
     namespace: &str,
     start_sequence: u64,
     group_id: u32,
-    priority: u8
+    priority: u8,
 ) -> BytesMut {
     let mut buffer = BytesMut::new();
     buffer.put_u8(TYPE_SUBSCRIBE);
@@ -393,7 +397,7 @@ pub fn serialize_object(object: &MoqObject) -> BytesMut {
             } // Key frame vs Regular frame
         }
         g if g == (MEDIA_TYPE_AUDIO as u32) => 0x04, // Audio frame
-        _ => 0x00, // Unknown type
+        _ => 0x00,                                   // Unknown type
     };
     inner_buffer.put_u8(type_flags);
 
@@ -455,7 +459,11 @@ pub fn deserialize_object(buf: &mut BytesMut) -> Result<MoqObject> {
     // Verify message type
     let msg_type = buf.get_u8();
     if msg_type != TYPE_OBJECT {
-        bail!("Invalid message type: {:#x}, expected {:#x}", msg_type, TYPE_OBJECT);
+        bail!(
+            "Invalid message type: {:#x}, expected {:#x}",
+            msg_type,
+            TYPE_OBJECT
+        );
     }
 
     // Need at least type and timestamp (9 bytes)
@@ -531,10 +539,7 @@ pub fn deserialize_object(buf: &mut BytesMut) -> Result<MoqObject> {
 
     info!(
         "Deserialized object with type_flags={:#x}, group_id={}, sequence={}, total_length={}",
-        type_flags,
-        group_id,
-        sequence,
-        total_length
+        type_flags, group_id, sequence, total_length
     );
 
     Ok(MoqObject {

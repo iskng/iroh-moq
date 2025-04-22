@@ -1,10 +1,10 @@
-use anyhow::Result;
-use std::time::{ Duration, SystemTime, UNIX_EPOCH };
-use tokio::{ sync::mpsc, task::JoinHandle };
-use uuid::Uuid;
-use crate::moq::proto::{ MediaInit, VideoChunk };
 use crate::moq::client::MoqIrohClient;
-use tracing::{ info, error };
+use crate::moq::proto::{MediaInit, VideoChunk};
+use anyhow::Result;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use tokio::{sync::mpsc, task::JoinHandle};
+use tracing::{error, info};
+use uuid::Uuid;
 
 /// Trait for video sources that can provide frames
 #[async_trait::async_trait]
@@ -99,7 +99,7 @@ pub trait VideoStreaming {
         namespace: String,
         source: impl VideoSource + Send + 'static,
         config: VideoConfig,
-        init_data: Vec<u8>
+        init_data: Vec<u8>,
     ) -> Result<JoinHandle<Result<()>>>;
 }
 
@@ -110,7 +110,7 @@ impl VideoStreaming for MoqIrohClient {
         namespace: String,
         mut source: impl VideoSource + Send + 'static,
         config: VideoConfig,
-        init_data: Vec<u8>
+        init_data: Vec<u8>,
     ) -> Result<JoinHandle<Result<()>>> {
         // Create initialization with source dimensions
         let init = MediaInit {
@@ -123,7 +123,10 @@ impl VideoStreaming for MoqIrohClient {
             init_segment: init_data.clone(),
         };
 
-        info!("Publishing video stream with resolution {}x{}", init.width, init.height);
+        info!(
+            "Publishing video stream with resolution {}x{}",
+            init.width, init.height
+        );
 
         // Publish the video stream via the protocol layer
         // This creates a single stream ID used for both announcement and data flow
@@ -166,7 +169,8 @@ impl VideoStreaming for MoqIrohClient {
 
                             // Create a video chunk from the frame
                             let is_keyframe = frame_count % (config.keyframe_interval as u64) == 0;
-                            let timestamp = frame.timestamp
+                            let timestamp = frame
+                                .timestamp
                                 .duration_since(UNIX_EPOCH)
                                 .unwrap_or_default()
                                 .as_micros() as u64;
@@ -210,9 +214,7 @@ impl VideoStreaming for MoqIrohClient {
                                 let fps = (frames_since_last_stats as f64) / now.as_secs_f64();
                                 info!(
                                     "Video stream stats: {} frames sent ({:.2} fps), total: {}",
-                                    frames_since_last_stats,
-                                    fps,
-                                    frame_count
+                                    frames_since_last_stats, fps, frame_count
                                 );
                                 frames_since_last_stats = 0;
                                 last_stats_time = SystemTime::now();

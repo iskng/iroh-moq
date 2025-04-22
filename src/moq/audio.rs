@@ -1,10 +1,10 @@
-use anyhow::Result;
-use std::time::{ Duration, SystemTime, UNIX_EPOCH };
-use tokio::{ sync::mpsc, task::JoinHandle };
-use uuid::Uuid;
-use crate::moq::proto::{ AudioInit, AudioChunk, MEDIA_TYPE_AUDIO };
 use crate::moq::client::MoqIrohClient;
-use tracing::{ info, error };
+use crate::moq::proto::{AudioChunk, AudioInit, MoqObject, MEDIA_TYPE_AUDIO, MEDIA_TYPE_EOF};
+use anyhow::Result;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use tokio::{sync::mpsc, task::JoinHandle};
+use tracing::{error, info};
+use uuid::Uuid;
 
 /// Trait representing a source of encoded audio frames.
 #[async_trait::async_trait]
@@ -82,7 +82,7 @@ pub trait AudioStreaming {
         namespace: String,
         source: impl AudioSource + Send + 'static,
         config: AudioConfig,
-        init_data: Vec<u8>
+        init_data: Vec<u8>,
     ) -> Result<JoinHandle<Result<()>>>;
 }
 
@@ -93,7 +93,7 @@ impl AudioStreaming for MoqIrohClient {
         namespace: String,
         mut source: impl AudioSource + Send + 'static,
         config: AudioConfig,
-        init_data: Vec<u8>
+        init_data: Vec<u8>,
     ) -> Result<JoinHandle<Result<()>>> {
         let init = AudioInit {
             codec: config.codec.clone(),
@@ -104,46 +104,57 @@ impl AudioStreaming for MoqIrohClient {
             init_segment: init_data.clone(),
         };
 
-        let (stream_id, chunk_sender) = self.publish_audio_stream(namespace.clone(), init).await?;
+        let (stream_id, object_sender) = self.publish_audio_stream(namespace.clone(), init).await?;
         info!("Audio stream published with ID: {}", stream_id);
 
-        let (request_tx, mut request_rx) = mpsc::channel::<()>(2);
-        let _ = request_tx.send(()).await; // initial trigger
-
         let handle = tokio::spawn(async move {
-            let mut frame_count: u64 = 0;
+            let mut sequence: u64 = 1; // Start sequence after init (assumed seq 0)
             loop {
-                match request_rx.recv().await {
-                    Some(_) => {
-                        let frame = match source.next_frame().await {
-                            Ok(f) => f,
-                            Err(e) => {
-                                error!("AudioSource error: {}", e);
-                                continue;
-                            }
-                        };
-                        let duration = frame.duration;
-                        let timestamp_us = frame.timestamp
-                            .duration_since(UNIX_EPOCH)?
-                            .as_micros() as u64;
-                        let chunk = AudioChunk {
+                match source.next_frame().await {
+                    Ok(frame) => {
+                        let timestamp_us =
+                            frame.timestamp.duration_since(UNIX_EPOCH)?.as_micros() as u64;
+                        let object = MoqObject {
+                            name: format!("audio-seg-{}", sequence), // Example name
+                            sequence,
                             timestamp: timestamp_us,
-                            duration: duration.as_micros() as u32,
-                            is_key: true,
+                            group_id: MEDIA_TYPE_AUDIO as u32,
+                            priority: 128, // Default priority
                             data: frame.data,
                         };
-                        if let Err(e) = chunk_sender.send(chunk).await {
-                            error!("Failed to send audio chunk: {}", e);
+                        if let Err(e) = object_sender.send(object).await {
+                            error!("Failed to send audio object: {}", e);
                             break;
                         }
-                        frame_count += 1;
-                        let _ = request_tx.send(()).await; // request next
+                        sequence += 1;
                     }
-                    None => {
-                        break;
+                    Err(e) => {
+                        if e.to_string().contains("End of audio file reached") {
+                            info!("AudioSource reported EOF; sending EOS marker.");
+                            let eos_object = MoqObject {
+                                name: format!("audio-eos-{}", sequence),
+                                sequence,
+                                timestamp: SystemTime::now().duration_since(UNIX_EPOCH)?.as_micros()
+                                    as u64,
+                                group_id: MEDIA_TYPE_EOF, // Use the EOS marker
+                                priority: 255,            // High priority
+                                data: Vec::new(),         // No data needed for EOS
+                            };
+                            if let Err(send_err) = object_sender.send(eos_object).await {
+                                error!("Failed to send EOS marker: {}", send_err);
+                            }
+                            break; // Exit loop after sending EOS
+                        } else {
+                            error!("AudioSource error: {}", e);
+                            // Decide if error is fatal or recoverable
+                            // For now, we break on any other error
+                            break;
+                        }
                     }
                 }
             }
+            info!("Audio stream loop completed for stream {}", stream_id);
+            // Sender is dropped automatically when task finishes
             Ok(())
         });
         Ok(handle)

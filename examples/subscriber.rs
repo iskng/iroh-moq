@@ -1,24 +1,24 @@
-use anyhow::{ Result, bail, anyhow };
-use iroh::{ Endpoint, SecretKey, NodeId };
+use anyhow::{anyhow, bail, Result};
+use chrono::Local;
+use clap::{ArgAction, Parser};
+use ffmpeg_next as ffmpeg;
+use futures::{pin_mut, StreamExt};
 use iroh::protocol::Router;
+use iroh::{Endpoint, NodeId, SecretKey};
+use iroh_moq::moq::proto::{MediaInit, VideoChunk};
 use iroh_moq::moq::protocol::MoqIroh;
-use iroh_moq::moq::proto::{ MediaInit, VideoChunk };
 use rand::rngs::OsRng;
 use std::env;
+use std::fs::File;
+use std::io::{BufWriter, Write};
+use std::process::{Command, Stdio};
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
+use std::time::{SystemTime, UNIX_EPOCH};
 use tokio;
-use futures::{ StreamExt, pin_mut };
-use tracing::{ info, error, debug, warn };
+use tracing::{debug, error, info, warn};
 use tracing_subscriber;
-use ffmpeg_next as ffmpeg;
-use std::io::{ BufWriter, Write };
-use std::fs::File;
-use chrono::Local;
-use std::process::{ Command, Stdio };
-use std::time::{ SystemTime, UNIX_EPOCH };
-use clap::{ Parser, ArgAction };
 
 // Initialize FFmpeg
 fn init_ffmpeg() -> Result<()> {
@@ -66,7 +66,9 @@ impl VideoSaver {
             let _ = std::fs::remove_file(&self.output_path);
 
             // Create named pipe (FIFO)
-            let fifo_status = std::process::Command::new("mkfifo").arg(&self.output_path).status()?;
+            let fifo_status = std::process::Command::new("mkfifo")
+                .arg(&self.output_path)
+                .status()?;
 
             if !fifo_status.success() {
                 bail!("Failed to create named pipe");
@@ -88,7 +90,7 @@ impl VideoSaver {
 
         // Generate optimized FFplay command for lowest latency
         let ffplay_cmd = format!(
-            "ffplay -loglevel warning -fflags nobuffer -flags low_delay -framedrop -infbuf -i {} \
+            "ffplay -loglevel warning -fflags nobuffer -flags low_delay -infbuf -i {} \
              -vf \"setpts=N/(30*TB)\" -threads 4 -probesize 32 -analyzeduration 0 \
              -sync ext -af aresample=async=1 -x 1280 -y 720 -window_title \"MOQ-Iroh Low-Latency Stream\"",
             self.output_path
@@ -107,12 +109,18 @@ impl VideoSaver {
             // Check if ffplay is available
             if let Err(e) = std::process::Command::new(program).arg("-version").output() {
                 warn!("FFplay not found or not executable: {}", e);
-                warn!("Will continue with file output; you can manually run: {}", ffplay_cmd);
+                warn!(
+                    "Will continue with file output; you can manually run: {}",
+                    ffplay_cmd
+                );
                 return Ok(());
             }
 
-            match
-                Command::new(program).args(args).stdout(Stdio::null()).stderr(Stdio::null()).spawn()
+            match Command::new(program)
+                .args(args)
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
             {
                 Ok(process) => {
                     info!("FFplay started successfully with PID: {}", process.id());
@@ -120,7 +128,10 @@ impl VideoSaver {
                 }
                 Err(e) => {
                     warn!("Failed to start FFplay: {}", e);
-                    warn!("Will continue with file output; you can manually run: {}", ffplay_cmd);
+                    warn!(
+                        "Will continue with file output; you can manually run: {}",
+                        ffplay_cmd
+                    );
                 }
             }
         }
@@ -175,7 +186,9 @@ impl VideoSaver {
         writeln!(
             script,
             "{}",
-            self.ffplay_command.as_ref().unwrap_or(&format!("ffplay {}", self.output_path))
+            self.ffplay_command
+                .as_ref()
+                .unwrap_or(&format!("ffplay {}", self.output_path))
         )?;
 
         // Make the script executable
@@ -187,7 +200,10 @@ impl VideoSaver {
             std::fs::set_permissions(&script_path, perms)?;
         }
 
-        println!("To watch the stream (if not already playing): sh {}", script_path);
+        println!(
+            "To watch the stream (if not already playing): sh {}",
+            script_path
+        );
 
         Ok(())
     }
@@ -197,7 +213,10 @@ impl VideoSaver {
         // Debug the chunk data
 
         if chunk.data.len() < 10 {
-            warn!("Received very small chunk ({}), possible incomplete data", chunk.data.len());
+            warn!(
+                "Received very small chunk ({}), possible incomplete data",
+                chunk.data.len()
+            );
             return Ok(());
         }
 
@@ -274,7 +293,11 @@ impl VideoSaver {
 
         // Write the FFmpeg command to the script
         writeln!(script, "#!/bin/sh")?;
-        writeln!(script, "ffmpeg -y -i {} -c:v copy {}.mp4", self.output_path, self.output_path)?;
+        writeln!(
+            script,
+            "ffmpeg -y -i {} -c:v copy {}.mp4",
+            self.output_path, self.output_path
+        )?;
 
         // Make the script executable
         #[cfg(unix)]
@@ -285,7 +308,10 @@ impl VideoSaver {
             std::fs::set_permissions(&script_path, perms)?;
         }
 
-        info!("Created conversion script at {}. Run this to create an MP4 file.", script_path);
+        info!(
+            "Created conversion script at {}. Run this to create an MP4 file.",
+            script_path
+        );
         info!("To create the MP4, run: sh {}", script_path);
 
         Ok(())
@@ -302,12 +328,11 @@ impl VideoSaver {
                 let args: Vec<&str> = parts[1..].to_vec();
 
                 println!("Starting FFplay to view the stream...");
-                match
-                    Command::new(program)
-                        .args(args)
-                        .stdout(Stdio::null())
-                        .stderr(Stdio::null())
-                        .spawn()
+                match Command::new(program)
+                    .args(args)
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .spawn()
                 {
                     Ok(_) => {
                         println!(
@@ -327,7 +352,9 @@ impl VideoSaver {
                 Err(anyhow!("Invalid FFplay command"))
             }
         } else {
-            Err(anyhow!("No FFplay command available. Start streaming first."))
+            Err(anyhow!(
+                "No FFplay command available. Start streaming first."
+            ))
         }
     }
 
@@ -364,8 +391,7 @@ impl VideoSaver {
                     #[cfg(unix)]
                     {
                         let pid = process.id();
-                        let _ = std::process::Command
-                            ::new("kill")
+                        let _ = std::process::Command::new("kill")
                             .arg("-9")
                             .arg(pid.to_string())
                             .spawn();
@@ -423,10 +449,12 @@ struct Args {
 #[tokio::main]
 async fn main() -> Result<()> {
     // Initialize tracing for better logging
-    let filter = tracing_subscriber::filter::EnvFilter
-        ::new("info")
+    let filter = tracing_subscriber::filter::EnvFilter::new("info")
         .add_directive("iroh_moq=debug".parse().unwrap());
-    let subscriber = tracing_subscriber::fmt().with_env_filter(filter).with_target(true).finish();
+    let subscriber = tracing_subscriber::fmt()
+        .with_env_filter(filter)
+        .with_target(true)
+        .finish();
     tracing::subscriber::set_global_default(subscriber)?;
 
     // Initialize FFmpeg
@@ -451,18 +479,23 @@ async fn main() -> Result<()> {
     // Set environment variable for file output control
     if file_output_enabled {
         std::env::set_var("MOQ_NO_FILE", "false");
-        info!("File output enabled, writing to: {}", args.output.as_ref().unwrap());
+        info!(
+            "File output enabled, writing to: {}",
+            args.output.as_ref().unwrap()
+        );
     } else {
         std::env::set_var("MOQ_NO_FILE", "true");
         info!("File output is disabled");
     }
 
-    info!("Auto-play is {}", if auto_play { "enabled" } else { "disabled" });
+    info!(
+        "Auto-play is {}",
+        if auto_play { "enabled" } else { "disabled" }
+    );
 
     // Parse publisher node ID
-    let publisher_id = NodeId::from_str(&args.publisher_id).map_err(|_|
-        anyhow!("Invalid node ID format")
-    )?;
+    let publisher_id =
+        NodeId::from_str(&args.publisher_id).map_err(|_| anyhow!("Invalid node ID format"))?;
 
     // Setup subscriber peer
     info!("Setting up subscriber peer...");
@@ -473,30 +506,41 @@ async fn main() -> Result<()> {
     info!("Subscriber node ID: {}", node_id);
 
     // Set up discovery
-    let discovery = iroh::discovery::ConcurrentDiscovery::from_services(
-        vec![
-            Box::new(iroh::discovery::dns::DnsDiscovery::n0_dns()),
-            Box::new(iroh::discovery::pkarr::PkarrPublisher::n0_dns(secret_key.clone()))
-        ]
-    );
+    let discovery = iroh::discovery::ConcurrentDiscovery::from_services(vec![
+        Box::new(iroh::discovery::dns::DnsDiscovery::n0_dns()),
+        Box::new(iroh::discovery::pkarr::PkarrPublisher::n0_dns(
+            secret_key.clone(),
+        )),
+    ]);
 
     // Set up endpoint
     let endpoint = Endpoint::builder()
         .secret_key(secret_key.clone())
         .discovery(Box::new(discovery))
-        .alpns(vec![iroh_moq::moq::proto::ALPN.to_vec(), iroh_gossip::ALPN.to_vec()])
-        .bind().await?;
+        .alpns(vec![
+            iroh_moq::moq::proto::ALPN.to_vec(),
+            iroh_gossip::ALPN.to_vec(),
+        ])
+        .bind()
+        .await?;
 
     // Set up gossip and MoQ
-    let gossip = Arc::new(iroh_gossip::net::Gossip::builder().spawn(endpoint.clone()).await?);
-    let moq = MoqIroh::builder().spawn(endpoint.clone(), gossip.clone()).await?;
+    let gossip = Arc::new(
+        iroh_gossip::net::Gossip::builder()
+            .spawn(endpoint.clone())
+            .await?,
+    );
+    let moq = MoqIroh::builder()
+        .spawn(endpoint.clone(), gossip.clone())
+        .await?;
     let client = moq.client();
 
     // Set up router
     let _router = Router::builder(endpoint.clone())
         .accept(iroh_moq::moq::proto::ALPN, moq.clone())
         .accept(iroh_gossip::ALPN, gossip.clone())
-        .spawn().await?;
+        .spawn()
+        .await?;
     let _router = Arc::new(_router);
 
     // Set up a channel for graceful shutdown
@@ -560,7 +604,7 @@ async fn main() -> Result<()> {
                 info!("Gracefully shut down, exiting now");
                 break;
             }
-            
+
             // Process stream announcements
             announcement = announcements.next() => {
                 match announcement {
@@ -584,7 +628,7 @@ async fn main() -> Result<()> {
                         // Process initialization segments
                         if let Some(init) = init_rx.recv().await {
                             info!("Received initialization segment: {} bytes", init.init_segment.len());
-                            
+
                             // Log the first few bytes of the init segment to debug
                             if !init.init_segment.is_empty() {
                                 let prefix = if init.init_segment.len() >= 20 {
@@ -601,13 +645,13 @@ async fn main() -> Result<()> {
                             video_saver = VideoSaver::new(output_path, &init);
                             if let Err(e) = video_saver.start_streaming() {
                                 error!("Failed to start video streaming: {}", e);
-                                
+
                                 // Only retry with a different path if file output is enabled
                                 if file_output_enabled {
                                     let timestamp = Local::now().format("%Y%m%d_%H%M%S").to_string();
                                     let new_path = format!("{}.{}.mp4", output_path, timestamp);
                                     warn!("Retrying with alternative path: {}", new_path);
-                                    
+
                                     video_saver = VideoSaver::new(&new_path, &init);
                                     if let Err(e) = video_saver.start_streaming() {
                                         error!("Failed again to start video streaming: {}", e);
@@ -619,7 +663,7 @@ async fn main() -> Result<()> {
                                     warn!("Continuing without file output");
                                 }
                             }
-                            
+
                             // Auto-start playback if enabled
                             if env::var("MOQ_AUTO_PLAY").unwrap_or_default() == "true" {
                                 info!("Auto-play enabled, attempting to start FFplay...");
@@ -631,17 +675,17 @@ async fn main() -> Result<()> {
                             }
                         } else {
                             warn!("No initialization segment received, continuing with default settings");
-                            
+
                             // Try to start streaming with default settings
                             if let Err(e) = video_saver.start_streaming() {
                                 error!("Failed to start video streaming: {}", e);
-                                
+
                                 // Only retry with a different path if file output is enabled
                                 if file_output_enabled {
                                     let timestamp = Local::now().format("%Y%m%d_%H%M%S").to_string();
                                     let new_path = format!("{}.{}.mp4", output_path, timestamp);
                                     warn!("Retrying with alternative path: {}", new_path);
-                                    
+
                                     video_saver = VideoSaver::new(&new_path, &default_init);
                                     if let Err(e) = video_saver.start_streaming() {
                                         error!("Failed again to start video streaming: {}", e);
@@ -664,7 +708,7 @@ async fn main() -> Result<()> {
                         let mut min_latency = Duration::from_secs(3600);
                         let mut max_latency = Duration::from_secs(0);
                         let mut total_latency = Duration::from_secs(0);
-                        
+
                         // Add a watchdog timer to detect if chunks stop flowing
                         let mut last_chunk_time = SystemTime::now();
                         let chunk_timeout = Duration::from_secs(5);
@@ -676,20 +720,19 @@ async fn main() -> Result<()> {
                                 // Check for shutdown signal
                                 _ = shutdown_rx.recv() => {
                                     info!("Shutting down during stream...");
-                                    // Ensure FFplay is killed
                                     if let Some(mut process) = video_saver.ffplay_process.take() {
                                         let _ = process.kill();
                                     }
                                     chunk_stream_done = true;
                                 }
-                                
+
                                 // Check for chunk timeout
                                 _ = tokio::time::sleep(Duration::from_millis(1000)) => {
                                     let now = SystemTime::now();
                                     if now.duration_since(last_chunk_time).unwrap_or_default() > chunk_timeout {
-                                        warn!("No chunks received for {} seconds, possible connection issue", 
+                                        warn!("No chunks received for {} seconds, possible connection issue",
                                              chunk_timeout.as_secs());
-                                        
+
                                         // Try to check if FFplay is still running
                                         if let Some(ref mut process) = video_saver.ffplay_process {
                                             // Try to kill the process if we're in shutdown mode
@@ -697,7 +740,7 @@ async fn main() -> Result<()> {
                                                 let _ = process.kill();
                                                 continue;
                                             }
-                                            
+
                                             match process.try_wait() {
                                                 Ok(Some(status)) => {
                                                     warn!("FFplay has exited with status: {}", status);
@@ -710,7 +753,7 @@ async fn main() -> Result<()> {
                                                 }
                                             }
                                         }
-                                        
+
                                         // Print current stats to provide some feedback
                                         if chunk_count > 0 {
                                             let elapsed = now.duration_since(start_time).unwrap_or_default();
@@ -721,7 +764,7 @@ async fn main() -> Result<()> {
                                             } else {
                                                 0.0
                                             };
-                                            
+
                                             println!("Current stream stats (waiting for more chunks):");
                                             println!(
                                                 "Received {} chunks ({:.2} MB) in {:.2} seconds ({:.2} fps)",
@@ -730,7 +773,7 @@ async fn main() -> Result<()> {
                                                 elapsed.as_secs_f64(),
                                                 fps
                                             );
-                                            
+
                                             if chunk_count > 1 {
                                                 println!(
                                                     "LATENCY METRICS: avg={:.2} ms, min={:.2} ms, max={:.2} ms",
@@ -742,15 +785,14 @@ async fn main() -> Result<()> {
                                         }
                                     }
                                 }
-                                
-                                // Process video chunks
-                                chunk = chunk_rx.recv() => {
-                                    match chunk {
-                                        Some(chunk) => {
-                                            // Update chunk received time
+
+                                // Process video chunks: receive the Option<VideoChunk>
+                                chunk_opt = chunk_rx.recv() => {
+                                    match chunk_opt { // Match on the received Option
+                                        Some(Some(chunk)) => { // If we got Some(VideoChunk)
+                                            // ----- Start of logic using unwrapped 'chunk' -----
                                             last_chunk_time = SystemTime::now();
-                                            
-                                            // Calculate latency for this chunk
+
                                             let now = SystemTime::now();
                                             let chunk_time = UNIX_EPOCH + Duration::from_micros(chunk.timestamp);
                                             let latency = match now.duration_since(chunk_time) {
@@ -761,16 +803,10 @@ async fn main() -> Result<()> {
                                                 }
                                             };
 
-                                            // Update latency statistics
-                                            if latency < min_latency {
-                                                min_latency = latency;
-                                            }
-                                            if latency > max_latency {
-                                                max_latency = latency;
-                                            }
+                                            if latency < min_latency { min_latency = latency; }
+                                            if latency > max_latency { max_latency = latency; }
                                             total_latency += latency;
 
-                                            // Record detailed timing info
                                             timing_info.push(TimingInfo {
                                                 _frame_timestamp: chunk.timestamp,
                                                 _received_time: now,
@@ -779,49 +815,31 @@ async fn main() -> Result<()> {
                                                 _sequence: chunk_count as u64,
                                             });
 
-                                        
-
-                                            // Process the chunk
                                             if let Err(e) = video_saver.add_chunk_streaming(&chunk) {
                                                 error!("Failed to process video chunk: {}", e);
                                             }
-                                            
+
                                             chunk_count += 1;
                                             total_bytes += chunk.data.len();
 
-                                            // Print statistics every second
                                             if now.duration_since(last_stats_time).unwrap_or_default() >= Duration::from_secs(1) {
                                                 let elapsed = now.duration_since(start_time).unwrap_or_default();
                                                 let fps = (chunk_count as f64) / elapsed.as_secs_f64();
                                                 let mbytes = (total_bytes as f64) / (1024.0 * 1024.0);
-
-                                                let avg_latency = if chunk_count > 0 {
-                                                    (total_latency.as_secs_f64() * 1000.0) / (chunk_count as f64)
-                                                } else {
-                                                    0.0
-                                                };
-
-                                                println!(
-                                                    "Received {} chunks ({:.2} MB) in {:.2} seconds ({:.2} fps)",
-                                                    chunk_count,
-                                                    mbytes,
-                                                    elapsed.as_secs_f64(),
-                                                    fps
-                                                );
-
-                                                println!(
-                                                    "LATENCY METRICS: avg={:.2} ms, min={:.2} ms, max={:.2} ms",
-                                                    avg_latency,
-                                                    min_latency.as_secs_f64() * 1000.0,
-                                                    max_latency.as_secs_f64() * 1000.0
-                                                );
-
+                                                let avg_latency_ms = if chunk_count > 0 { (total_latency.as_secs_f64() * 1000.0) / (chunk_count as f64) } else { 0.0 };
+                                                println!("Received {} chunks ({:.2} MB) in {:.2} seconds ({:.2} fps)", chunk_count, mbytes, elapsed.as_secs_f64(), fps);
+                                                println!("LATENCY METRICS: avg={:.2} ms, min={:.2} ms, max={:.2} ms", avg_latency_ms, min_latency.as_secs_f64() * 1000.0, max_latency.as_secs_f64() * 1000.0);
                                                 last_stats_time = now;
                                             }
+                                            // ----- End of logic using unwrapped 'chunk' -----
                                         }
-                                        None => {
-                                            info!("Video stream ended");
-                                            chunk_stream_done = true;
+                                        Some(None) => { // If we received Some(None), it's the EOS signal
+                                            info!("Video stream segment ended (EOS received).");
+                                            chunk_stream_done = true; // Set flag to exit the outer while loop
+                                        }
+                                        None => { // If the channel itself closed unexpectedly
+                                             warn!("Chunk channel closed unexpectedly.");
+                                             chunk_stream_done = true;
                                         }
                                     }
                                 }

@@ -1,37 +1,37 @@
-use screencapturekit::{
-    stream::{
-        SCStream,
-        configuration::{ SCStreamConfiguration, pixel_format::PixelFormat },
-        content_filter::SCContentFilter,
-        output_type::SCStreamOutputType,
-        output_trait::SCStreamOutputTrait,
-        delegate_trait::SCStreamDelegateTrait,
-    },
-    shareable_content::SCShareableContent,
-    output::CMSampleBuffer,
-};
-use screencapturekit::output::MutLockTrait;
-use ffmpeg_next as ffmpeg;
-use ffmpeg::software::scaling::{ context::Context as Scaler, flag::Flags };
+use anyhow::{ bail, Result };
+use async_trait::async_trait;
+use chrono;
 use ffmpeg::codec::{ self, encoder, packet };
 use ffmpeg::format::Pixel as FFmpegPixel;
+use ffmpeg::software::scaling::{ context::Context as Scaler, flag::Flags };
 use ffmpeg::util::frame::video::Video as FfmpegFrame;
-use tracing::{ info, error };
-use tracing_subscriber;
-use std::time::{ SystemTime, UNIX_EPOCH, Duration };
-use anyhow::{ Result, bail };
-use tokio::sync::mpsc;
-use std::sync::{ Arc, Mutex };
-use async_trait::async_trait;
-use iroh_moq::moq::{ client::MoqIrohClient, proto::MediaInit, VideoStreaming };
-use iroh_moq::moq::protocol::MoqIroh;
-use iroh_moq::moq::video::{ VideoSource, VideoFrame, VideoConfig };
-use iroh::{ Endpoint, SecretKey, NodeId };
-use iroh::protocol::Router;
-use rand::rngs::OsRng;
-use futures::StreamExt;
+use ffmpeg_next as ffmpeg;
 use futures::pin_mut;
-use chrono;
+use futures::StreamExt;
+use iroh::protocol::Router;
+use iroh::{ Endpoint, NodeId, SecretKey };
+use iroh_moq::moq::protocol::MoqIroh;
+use iroh_moq::moq::video::{ VideoConfig, VideoFrame, VideoSource };
+use iroh_moq::moq::{ client::MoqIrohClient, proto::MediaInit, VideoStreaming };
+use rand::rngs::OsRng;
+use screencapturekit::output::MutLockTrait;
+use screencapturekit::{
+    output::CMSampleBuffer,
+    shareable_content::SCShareableContent,
+    stream::{
+        configuration::{ pixel_format::PixelFormat, SCStreamConfiguration },
+        content_filter::SCContentFilter,
+        delegate_trait::SCStreamDelegateTrait,
+        output_trait::SCStreamOutputTrait,
+        output_type::SCStreamOutputType,
+        SCStream,
+    },
+};
+use std::sync::{ Arc, Mutex };
+use std::time::{ Duration, SystemTime, UNIX_EPOCH };
+use tokio::sync::mpsc;
+use tracing::{ error, info };
+use tracing_subscriber;
 
 struct FrameHandler {
     sender: mpsc::Sender<CMSampleBuffer>,
@@ -530,20 +530,24 @@ async fn _test_screen_capture_hevc_moq_impl() -> Result<()> {
     info!("🔍 [{}] Attempting to receive first video chunk...", chrono::Utc::now());
     let chunk_start = std::time::Instant::now();
     let first_chunk = match tokio::time::timeout(Duration::from_secs(5), chunk_rx.recv()).await {
-        Ok(Some(chunk)) => {
+        Ok(Some(Some(actual_chunk))) => {
             let duration = chunk_start.elapsed();
             info!(
                 "✅ RECEIVED FIRST VIDEO CHUNK: {} bytes in {:?}, keyframe: {}, timestamp: {}",
-                chunk.data.len(),
+                actual_chunk.data.len(),
                 duration,
-                chunk.is_keyframe,
-                chunk.timestamp
+                actual_chunk.is_keyframe,
+                actual_chunk.timestamp
             );
-            chunk
+            actual_chunk
+        }
+        Ok(Some(None)) => {
+            error!("❌ Stream ended (EOS) before first chunk");
+            return Err(anyhow::anyhow!("Stream ended before first chunk"));
         }
         Ok(None) => {
-            error!("❌ Channel closed without receiving first video chunk");
-            return Err(anyhow::anyhow!("Did not receive first video chunk"));
+            error!("❌ Channel closed before first chunk");
+            return Err(anyhow::anyhow!("Channel closed before first chunk"));
         }
         Err(_) => {
             error!("❌ TIMEOUT waiting for first video chunk after 5 seconds");
@@ -558,16 +562,16 @@ async fn _test_screen_capture_hevc_moq_impl() -> Result<()> {
 
     while received_chunks < expected_chunks {
         match tokio::time::timeout(Duration::from_secs(2), chunk_rx.recv()).await {
-            Ok(Some(chunk)) => {
+            Ok(Some(Some(actual_chunk))) => {
                 received_chunks += 1;
-                total_bytes += chunk.data.len();
+                total_bytes += actual_chunk.data.len();
                 if received_chunks % 10 == 0 || received_chunks < 5 {
                     info!(
                         "✅ Received chunk #{}: {} bytes, keyframe: {}, timestamp: {}",
                         received_chunks,
-                        chunk.data.len(),
-                        chunk.is_keyframe,
-                        chunk.timestamp
+                        actual_chunk.data.len(),
+                        actual_chunk.is_keyframe,
+                        actual_chunk.timestamp
                     );
                     if let Ok(elapsed) = SystemTime::now().duration_since(start_time) {
                         let elapsed_secs = elapsed.as_secs_f64();
@@ -581,10 +585,16 @@ async fn _test_screen_capture_hevc_moq_impl() -> Result<()> {
                     }
                 }
             }
+            Ok(Some(None)) => {
+                info!("ℹ️ Stream ended (EOS) after {} chunks.", received_chunks);
+                break;
+            }
             Ok(None) => {
-                return Err(anyhow::anyhow!("Stream closed before receiving all chunks"));
+                error!("❌ Channel closed unexpectedly after {} chunks.", received_chunks);
+                return Err(anyhow::anyhow!("Channel closed unexpectedly"));
             }
             Err(_) => {
+                error!("❌ TIMEOUT waiting for chunk {} after 2 seconds", received_chunks + 1);
                 return Err(anyhow::anyhow!("Timeout waiting for chunk {}", received_chunks + 1));
             }
         }

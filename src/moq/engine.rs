@@ -1,17 +1,17 @@
 use crate::moq::proto::{ MoqObject, MEDIA_TYPE_INIT };
-use iroh::Endpoint;
+use anyhow::{ bail, Result };
+use dashmap::DashMap;
 use iroh::endpoint::SendStream;
+use iroh::Endpoint;
 use iroh::NodeId;
 use iroh_gossip::net::Gossip;
-use anyhow::{ Result, bail };
-use tokio::sync::{ mpsc, Mutex, broadcast };
-use std::sync::Arc;
-use tracing::{ info, error, debug, warn, trace };
 use std::collections::{ HashMap, VecDeque };
-use dashmap::DashMap;
-use uuid::Uuid;
-use tokio::io::AsyncWriteExt;
+use std::sync::Arc;
 use std::time::Duration;
+use tokio::io::AsyncWriteExt;
+use tokio::sync::{ broadcast, mpsc, Mutex };
+use tracing::{ debug, error, info, trace, warn };
+use uuid::Uuid;
 
 // Constants
 const SLIDING_WINDOW_SIZE: usize = 100; // Max objects in retransmission buffer
@@ -244,7 +244,7 @@ impl MoqIrohEngine {
 
         // Find or create stream actor
         let stream_key = (stream_id, namespace.clone());
-        let available_actors: Vec<_> = self.stream_actors
+        let _available_actors: Vec<_> = self.stream_actors
             .iter()
             .map(|e| e.key().clone())
             .collect();
@@ -295,12 +295,7 @@ impl MoqIrohEngine {
         );
 
         if let Some(cmd_tx) = self.stream_actors.get(&(stream_id, normalized_ns.clone())) {
-            if
-                let Err(e) = cmd_tx.send(StreamCommand::SetDataStream {
-                    node_id,
-                    stream,
-                }).await
-            {
+            if let Err(e) = cmd_tx.send(StreamCommand::SetDataStream { node_id, stream }).await {
                 error!("Failed to send set data stream command: {}", e);
             }
         } else {
@@ -463,6 +458,13 @@ impl MoqIrohEngine {
             }
         }
 
+        // Add logging here before the info! message
+        debug!(
+            "Stream actor loop finished for {} in namespace {}. Final state: {:?}",
+            stream_id,
+            namespace,
+            state
+        );
         info!("Stream actor for {} in namespace {} terminated", stream_id, namespace);
     }
 

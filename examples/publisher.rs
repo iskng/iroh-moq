@@ -1,35 +1,34 @@
-use screencapturekit::{
-    stream::{
-        SCStream,
-        configuration::{ SCStreamConfiguration, pixel_format::PixelFormat },
-        content_filter::SCContentFilter,
-        output_type::SCStreamOutputType,
-        output_trait::SCStreamOutputTrait,
-        delegate_trait::SCStreamDelegateTrait,
-    },
-    shareable_content::SCShareableContent,
-    output::CMSampleBuffer,
-};
-use screencapturekit::output::MutLockTrait;
-use ffmpeg_next as ffmpeg;
-use ffmpeg::software::scaling::{ context::Context as Scaler, flag::Flags };
-use ffmpeg::codec::{ self, encoder, packet, Context as CodecContext };
+use anyhow::{ anyhow, bail, Result };
+use ffmpeg::codec::{ encoder, packet, Context as CodecContext };
 use ffmpeg::format::Pixel as FFmpegPixel;
+use ffmpeg::software::scaling::{ context::Context as Scaler, flag::Flags };
 use ffmpeg::util::frame::video::Video as FfmpegFrame;
-use ffmpeg::Rational;
-use tracing::{ info, error, warn, debug };
-use tracing_subscriber;
-use std::time::{ Duration, SystemTime, UNIX_EPOCH };
-use anyhow::{ Result, bail, anyhow };
-use tokio::sync::mpsc;
-use std::sync::{ Arc, Mutex };
+use ffmpeg_next as ffmpeg;
+use iroh::protocol::Router;
+use iroh::{ Endpoint, NodeId, SecretKey };
 use iroh_moq::moq::proto::{ MediaInit, VideoChunk };
 use iroh_moq::moq::protocol::MoqIroh;
 use iroh_moq::moq::video::VideoConfig;
-use iroh::{ Endpoint, SecretKey, NodeId };
-use iroh::protocol::Router;
 use rand::rngs::OsRng;
+use screencapturekit::output::MutLockTrait;
+use screencapturekit::{
+    output::CMSampleBuffer,
+    shareable_content::SCShareableContent,
+    stream::{
+        configuration::{ pixel_format::PixelFormat, SCStreamConfiguration },
+        content_filter::SCContentFilter,
+        delegate_trait::SCStreamDelegateTrait,
+        output_trait::SCStreamOutputTrait,
+        output_type::SCStreamOutputType,
+        SCStream,
+    },
+};
+use std::sync::{ Arc, Mutex };
+use std::time::{ Duration, SystemTime, UNIX_EPOCH };
+use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
+use tracing::{ debug, error, info, warn };
+use tracing_subscriber;
 
 struct FrameHandler {
     sender: mpsc::Sender<CMSampleBuffer>,
@@ -82,7 +81,7 @@ impl ScreenCapturer {
         let filter = SCContentFilter::new().with_display_excluding_windows(display, &[]);
         let (tx, mut rx) = mpsc::channel(64);
 
-        let delegate = FrameHandler { sender: tx.clone() };
+        let _delegate = FrameHandler { sender: tx.clone() };
         let mut stream = SCStream::new(&filter, &config);
 
         stream.add_output_handler(FrameHandler { sender: tx }, SCStreamOutputType::Screen);
@@ -413,7 +412,7 @@ async fn main() -> Result<()> {
                                  }
                              }
                          }
-                     
+
                           Err(ffmpeg_next::Error::Eof) => {
                               info!("Encoder reached EOF during receive_packet.");
                               shutdown_token.cancel();
