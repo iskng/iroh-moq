@@ -29,6 +29,7 @@ use uuid::Uuid;
 // Protocol-specific constants
 const STREAM_TYPE_CONTROL: u8 = 0x01;
 const STREAM_TYPE_DATA: u8 = 0x02;
+const STREAM_TYPE_HTTP: u8 = 0x03;
 
 // SubscriberState enum tracking the actor's current state
 #[derive(Debug, Clone, PartialEq)]
@@ -931,4 +932,65 @@ pub async fn subscribe_to_audio_stream(
     announcement: StreamAnnouncement
 ) -> Result<(mpsc::Receiver<AudioInit>, mpsc::Receiver<Option<AudioChunk>>)> {
     SubscriberActor::new_audio(endpoint, engine, announcement).await
+}
+
+// --------------------------------------------------------------------
+// Subscriber helper to perform an HTTP fetch via the publisher
+// --------------------------------------------------------------------
+
+/// Send an ordinary HTTP/1.1 request to the publisher and return the raw
+/// response bytes.
+///
+/// # Arguments
+/// * `endpoint` - The local Iroh endpoint.
+/// * `publisher_id` - The NodeId of the publisher acting as the proxy.
+/// * `request` - The raw HTTP request bytes (e.g., b"GET /path HTTP/1.1\r\nHost: example.com\r\n\r\n").
+///
+/// # Returns
+/// * `Ok(Vec<u8>)` containing the raw HTTP response bytes on success.
+/// * `Err` if the connection, stream handling, or request fails.
+pub async fn http_fetch(
+    endpoint: &Endpoint,
+    publisher_id: NodeId,
+    request: &[u8]
+) -> anyhow::Result<Vec<u8>> {
+    info!("Initiating HTTP fetch via publisher {}", publisher_id);
+
+    // open QUIC connection using the MoQ ALPN
+    let conn = endpoint.connect(publisher_id, ALPN).await?;
+    info!("Connected to publisher for HTTP fetch.");
+
+    // open a bi-directional QUIC stream
+    let (mut send, mut recv) = conn.open_bi().await?;
+    info!("Opened bi-directional stream for HTTP fetch.");
+
+    // 2a. announce the new stream-type
+    send.write_all(&[STREAM_TYPE_HTTP]).await?;
+    debug!("Sent STREAM_TYPE_HTTP byte.");
+
+    // 2b. send the HTTP request verbatim
+    send.write_all(request).await?;
+    debug!("Sent {} request bytes.", request.len());
+
+    // 2c. finish the write side to signal end of request
+    send.finish()?;
+    debug!("Finished send side of the stream.");
+
+    // 2d. collect the response
+    let mut resp_bytes = Vec::new();
+    let mut total_resp_read = 0;
+    let max_response_size = 10 * 1024 * 1024; // e.g., 10 MiB limit
+
+    info!("Reading HTTP response...");
+    while let Some(chunk) = recv.read_chunk(64 * 1024, false).await? {
+        total_resp_read += chunk.bytes.len();
+        if total_resp_read > max_response_size {
+            bail!("HTTP response exceeds maximum size of {} bytes", max_response_size);
+        }
+        resp_bytes.extend_from_slice(&chunk.bytes);
+        trace!("Read {} response bytes (total {})", chunk.bytes.len(), total_resp_read);
+    }
+
+    info!("Finished reading HTTP response ({} bytes).", resp_bytes.len());
+    Ok(resp_bytes)
 }

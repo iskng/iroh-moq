@@ -45,6 +45,7 @@ use tokio::io::AsyncWriteExt;
 use tokio::sync::{ broadcast, mpsc };
 use tracing::{ debug, error, info, trace, warn };
 use uuid::Uuid;
+use anyhow::anyhow;
 
 use super::MoqIrohClient;
 use crate::moq::subscriber;
@@ -52,6 +53,7 @@ use crate::moq::subscriber;
 // Protocol-specific constants
 const STREAM_TYPE_CONTROL: u8 = 0x01;
 const STREAM_TYPE_DATA: u8 = 0x02;
+const STREAM_TYPE_HTTP: u8 = 0x03;
 
 /// Configuration for the MOQ-Iroh service
 #[derive(Clone, Debug)]
@@ -1001,6 +1003,84 @@ impl MoqIroh {
     }
 }
 
+// --------------------------------------------------------------------
+// Helper function to handle incoming HTTP proxy requests
+// --------------------------------------------------------------------
+async fn handle_http_stream(mut send: SendStream, mut recv: RecvStream) -> anyhow::Result<()> {
+    // 3a. read the entire HTTP request the subscriber sent
+    let mut req_bytes = Vec::new();
+    // Limit request size to avoid DoS
+    let mut total_read = 0;
+    let max_request_size = 16 * 1024; // e.g., 16 KiB
+
+    while let Some(chunk) = recv.read_chunk(1024, false).await? {
+        total_read += chunk.bytes.len();
+        if total_read > max_request_size {
+            bail!("HTTP request exceeds maximum size of {} bytes", max_request_size);
+        }
+        req_bytes.extend_from_slice(&chunk.bytes);
+    }
+
+    if req_bytes.is_empty() {
+        bail!("Received empty HTTP request");
+    }
+
+    let req_str = String::from_utf8(req_bytes)?;
+    info!("Received HTTP request:\n{}", req_str);
+
+    // 3b. Very basic parser – just extract path from the first line
+    let path = req_str
+        .lines()
+        .next()
+        .and_then(|l| l.split_whitespace().nth(1))
+        .ok_or_else(|| anyhow!("malformed request line"))?;
+
+    // Sanitize path to prevent directory traversal
+    let sanitized_path = path.trim_start_matches('/');
+    if sanitized_path.contains("..") {
+        bail!("invalid path contains '..'");
+    }
+
+    // 3c. Serve local file from a 'www' subdirectory
+    let file_path = format!("www/{}", sanitized_path);
+    info!("Attempting to serve file: {}", file_path);
+
+    match tokio::fs::read(&file_path).await {
+        Ok(body) => {
+            // 3d. craft a minimal HTTP/1.1 response
+            let header = format!(
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", // Added Connection: close
+                body.len()
+            );
+            send.write_all(header.as_bytes()).await?;
+            send.write_all(&body).await?;
+            info!("Successfully sent file: {}", file_path);
+        }
+        Err(e) => {
+            // Handle file not found or other errors
+            error!("Failed to read file {}: {}", file_path, e);
+            let (status_code, message) = if e.kind() == std::io::ErrorKind::NotFound {
+                ("404 Not Found", "File not found.")
+            } else {
+                ("500 Internal Server Error", "Failed to read file.")
+            };
+            let body = message.as_bytes();
+            let header = format!(
+                "HTTP/1.1 {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                status_code,
+                body.len()
+            );
+            send.write_all(header.as_bytes()).await?;
+            send.write_all(body).await?;
+        }
+    }
+
+    // 3e. Finish the stream
+    send.finish()?;
+    debug!("Finished sending HTTP response for {}", path);
+    Ok(())
+}
+
 impl ProtocolHandler for MoqIroh {
     /// Handles incoming connections by accepting them and setting up control/data streams.
     ///
@@ -1025,7 +1105,7 @@ impl ProtocolHandler for MoqIroh {
                     Ok(_) => {
                         let stream_type = stream_type_buf[0];
                         let protocol_clone = protocol.clone();
-                        let conn_clone = conn.clone();
+                        let conn_clone = conn.clone(); // Clone conn for use inside the match arms
 
                         match stream_type {
                             STREAM_TYPE_CONTROL => {
@@ -1036,7 +1116,7 @@ impl ProtocolHandler for MoqIroh {
                                             send,
                                             recv,
                                             remote_id,
-                                            conn_clone
+                                            conn_clone // Pass the cloned connection
                                         ).await
                                     {
                                         error!("Control stream error: {:?}", e);
@@ -1055,29 +1135,43 @@ impl ProtocolHandler for MoqIroh {
                                 tokio::spawn(async move {
                                     if
                                         let Err(e) = Self::handle_data_stream(
-                                            default_stream_id, // Use created UUID instead of remote_id
-                                            default_namespace, // Use default namespace
+                                            default_stream_id,
+                                            default_namespace,
                                             recv,
-                                            send, // Pass the SendStream to handle_data_stream
-                                            protocol_for_data.engine,
-                                            remote_id // Keep remote_id as NodeId
+                                            send,
+                                            protocol_for_data.engine, // Pass the engine Arc directly
+                                            remote_id
                                         ).await
                                     {
                                         error!("Data stream connection error: {:?}", e);
                                     }
                                 });
                             }
+                            STREAM_TYPE_HTTP => {
+                                info!("Accepted HTTP proxy stream from {}", remote_id);
+                                // No need to clone protocol_clone here, already cloned above
+                                tokio::spawn(async move {
+                                    if let Err(e) = handle_http_stream(send, recv).await {
+                                        error!("HTTP proxy stream error: {}", e);
+                                    }
+                                });
+                            }
                             unknown => {
                                 error!("Unknown stream type: {}", unknown);
+                                // Optionally close the stream immediately
+                                // let _ = send.finish();
                             }
                         }
                     }
                     Err(e) => {
                         error!("Failed to read stream type: {}", e);
+                        // Break the loop if we can't even read the stream type
+                        break;
                     }
                 }
             }
 
+            info!("Finished handling connection from {}", remote_id); // Log when loop exits
             Ok(())
         })
     }
