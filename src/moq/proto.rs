@@ -573,3 +573,7 @@ pub fn deserialize_subscribe_ok(buffer: &mut BytesMut) -> Result<Uuid> {
 pub fn topic_hash(topic: &[u8]) -> blake3::Hash {
     blake3::hash(topic)
 }
+
+#[cfg(test)]
+#[path = "proto_tests.rs"]
+mod tests;
