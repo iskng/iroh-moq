@@ -11,6 +11,7 @@ pub mod client;
 pub mod engine;
 pub mod proto;
 pub mod protocol;
+pub mod retransmission_buffer;
 pub mod subscriber;
 pub mod video;
 

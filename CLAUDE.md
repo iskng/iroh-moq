@@ -30,6 +30,7 @@ cargo test --test retransmission_tests       # Run retransmission tests
 ```bash
 cargo bench --bench streaming_performance    # Run throughput benchmarks
 cargo bench --bench latency_benchmark        # Run latency benchmarks
+cargo bench --bench retransmission_benchmark # Run retransmission buffer benchmarks
 cargo bench -- --sample-size 10              # Quick benchmark run
 ```
 
@@ -66,6 +67,7 @@ cargo run --example http_subscriber -- <NODE_ID>
    - Core streaming engine managing publishers/subscribers
    - StreamActorState manages subscribers and buffering
    - Handles stream lifecycle and chunk distribution
+   - Uses efficient RetransmissionBuffer with O(log n) lookup
 
 3. **Client API** (`src/moq/client.rs`)
    - High-level client for publish/subscribe operations
@@ -80,6 +82,12 @@ cargo run --example http_subscriber -- <NODE_ID>
 5. **Media Processing**
    - Video (`src/moq/video.rs`): Screen capture, HEVC/H.264 encoding
    - Audio (`src/moq/audio.rs`): Audio capture, Opus/G.722 encoding
+
+6. **Retransmission Buffer** (`src/moq/retransmission_buffer.rs`)
+   - Efficient buffer with O(log n) sequence lookup using BTreeMap
+   - Priority-based eviction for quality of service
+   - Configurable size limits (object count and bytes)
+   - Special handling for init segments
 
 ### Key Design Patterns
 

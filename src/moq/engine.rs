@@ -1,11 +1,12 @@
 use crate::moq::proto::{ MoqObject, MEDIA_TYPE_INIT };
+use crate::moq::retransmission_buffer::{RetransmissionBuffer, RetransmissionBufferConfig};
 use anyhow::{ bail, Result };
 use dashmap::DashMap;
 use iroh::endpoint::SendStream;
 use iroh::Endpoint;
 use iroh::NodeId;
 use iroh_gossip::net::Gossip;
-use std::collections::{ HashMap, VecDeque };
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::AsyncWriteExt;
@@ -21,35 +22,26 @@ const OBJECT_SEND_TIMEOUT: Duration = Duration::from_secs(5);
 const OBJECT_FLUSH_TIMEOUT: Duration = Duration::from_secs(2);
 
 // State associated with a single stream actor
-#[derive(Debug)]
 struct StreamActorState {
     subscribers: HashMap<NodeId, (u32, Option<SendStream>)>,
-    buffer: VecDeque<MoqObject>,
-    init_segment: Option<MoqObject>,
+    buffer: RetransmissionBuffer,
     stream_id: Uuid,
     namespace: String,
 }
 
 impl StreamActorState {
     fn new(stream_id: Uuid, namespace: String) -> Self {
+        let buffer_config = RetransmissionBufferConfig {
+            max_objects: SLIDING_WINDOW_SIZE,
+            max_bytes: 50 * 1024 * 1024, // 50MB
+            priority_eviction: true,
+        };
+        
         Self {
             subscribers: HashMap::new(),
-            buffer: VecDeque::with_capacity(SLIDING_WINDOW_SIZE),
-            init_segment: None,
+            buffer: RetransmissionBuffer::new(buffer_config),
             stream_id,
             namespace,
-        }
-    }
-
-    // Helper to add object to buffer, handling init segment and size limit
-    fn add_object_to_buffer(&mut self, object: MoqObject) {
-        if object.group_id == (MEDIA_TYPE_INIT as u32) {
-            debug!("Storing init segment for stream {}", self.stream_id);
-            self.init_segment = Some(object.clone());
-        }
-        self.buffer.push_back(object);
-        if self.buffer.len() > SLIDING_WINDOW_SIZE {
-            self.buffer.pop_front();
         }
     }
 }
@@ -460,17 +452,18 @@ impl MoqIrohEngine {
 
         // Add logging here before the info! message
         debug!(
-            "Stream actor loop finished for {} in namespace {}. Final state: {:?}",
+            "Stream actor loop finished for {} in namespace {}. Buffer stats: {:?}",
             stream_id,
             namespace,
-            state
+            state.buffer.stats()
         );
         info!("Stream actor for {} in namespace {} terminated", stream_id, namespace);
     }
 
     /// Handles the PublishObject command for a stream actor.
     async fn handle_publish_object(state: &mut StreamActorState, object: MoqObject) {
-        state.add_object_to_buffer(object.clone());
+        let sequence = object.sequence;
+        state.buffer.add(object.clone());
 
         // Send to all matching subscribers
         for (node_id, (group_id, data_stream_opt)) in &mut state.subscribers {
@@ -481,7 +474,7 @@ impl MoqIrohEngine {
                     if let Err(e) = Self::send_object_to_stream(data_stream, &object).await {
                         error!(
                             "Failed to send object seq {} to subscriber {}: {}",
-                            object.sequence,
+                            sequence,
                             node_id,
                             e
                         );
@@ -524,34 +517,44 @@ impl MoqIrohEngine {
                 state.stream_id
             );
 
-            // Send init segment if available and applicable
-            if let Some(init) = &state.init_segment {
-                let applies = *group_id == 0 || *group_id == init.group_id;
-                if applies {
-                    debug!("Sending init segment to new subscriber {}", node_id);
-                    if let Err(e) = Self::send_object_to_stream(&mut stream, init).await {
-                        error!("Failed to send init segment to subscriber {}: {}", node_id, e);
-                        // If we fail to send the init segment, the subscriber might be broken.
-                        // We could remove the subscriber here, but let's keep it simple for now.
-                    } else {
-                        info!("Successfully sent init segment to subscriber {}", node_id);
+            // Get init segment if available (sequence 0 is typically init)
+            if let Some(init) = state.buffer.get(0) {
+                if init.group_id == (MEDIA_TYPE_INIT as u32) {
+                    let applies = *group_id == 0 || *group_id == init.group_id;
+                    if applies {
+                        debug!("Sending init segment to new subscriber {}", node_id);
+                        if let Err(e) = Self::send_object_to_stream(&mut stream, &init).await {
+                            error!("Failed to send init segment to subscriber {}: {}", node_id, e);
+                            // If we fail to send the init segment, the subscriber might be broken.
+                            // We could remove the subscriber here, but let's keep it simple for now.
+                        } else {
+                            info!("Successfully sent init segment to subscriber {}", node_id);
+                        }
                     }
                 }
             }
 
             // Send buffered objects to the new subscriber
-            for obj in state.buffer.iter() {
-                // Check group ID match again for safety
-                if *group_id == 0 || *group_id == obj.group_id {
-                    if let Err(e) = Self::send_object_to_stream(&mut stream, obj).await {
-                        error!(
-                            "Failed to send buffered object seq {} to subscriber {}: {}",
-                            obj.sequence,
-                            node_id,
-                            e
-                        );
-                        // If sending buffer fails, stop sending more to this subscriber for now.
-                        break;
+            // Get all buffered objects (this is temporary until we track min/max sequence)
+            let buffer_stats = state.buffer.stats();
+            if buffer_stats.total_objects > 0 {
+                // For now, we'll get a reasonable range of recent objects
+                // In a real implementation, we'd track the actual sequence range
+                let recent_objects = state.buffer.get_range(0, u64::MAX);
+                
+                for obj in recent_objects {
+                    // Check group ID match again for safety
+                    if *group_id == 0 || *group_id == obj.group_id {
+                        if let Err(e) = Self::send_object_to_stream(&mut stream, &obj).await {
+                            error!(
+                                "Failed to send buffered object seq {} to subscriber {}: {}",
+                                obj.sequence,
+                                node_id,
+                                e
+                            );
+                            // If sending buffer fails, stop sending more to this subscriber for now.
+                            break;
+                        }
                     }
                 }
             }
@@ -602,12 +605,12 @@ impl MoqIrohEngine {
 
         if let Some((group_id, data_stream_opt)) = state.subscribers.get_mut(&node_id) {
             if let Some(data_stream) = data_stream_opt.as_mut() {
-                // Find the object in the buffer
-                if let Some(obj) = state.buffer.iter().find(|o| o.sequence == sequence) {
+                // Use efficient O(log n) lookup from the new buffer
+                if let Some(obj) = state.buffer.get(sequence) {
                     // Check if the group matches before sending
                     if *group_id == 0 || *group_id == obj.group_id {
                         debug!("Retransmitting object with sequence {} to {}", sequence, node_id);
-                        if let Err(e) = Self::send_object_to_stream(data_stream, obj).await {
+                        if let Err(e) = Self::send_object_to_stream(data_stream, &obj).await {
                             error!(
                                 "Failed to retransmit object seq {} to {}: {}",
                                 sequence,
